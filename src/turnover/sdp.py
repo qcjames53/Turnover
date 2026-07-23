@@ -7,6 +7,8 @@
 import socket
 import uuid
 
+from . import _fake_device
+
 MESSAGE_ACCESS_SERVICE_CLASS = 0x1132
 PHONEBOOK_ACCESS_SERVICE_CLASS = 0x112F
 
@@ -177,6 +179,9 @@ def find_rfcomm_channel(address: str, service_class: int) -> int:
         - PHONEBOOK_ACCESS_SERVICE_CLASS = 0x112F
     :returns: RFCOMM channel number advertised for the service.
     """
+    if _fake_device.enabled():
+        return _fake_device.FakeDevice().channel_for(service_class)
+
     sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
     try:
         sock.settimeout(5.0)

@@ -10,12 +10,17 @@ readme = "README.md"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
-    "PyGObject>=3.50",
     "phonenumbers",
     "wcwidth>=0.2",
 ]
 
 [project.optional-dependencies]
+# Needed for BlueZ D-Bus pairing lookups (bt.py) on real hardware -- not installable
+# on macOS without a full GTK/cairo toolchain, and not needed at all when developing
+# against TURNOVER_FAKE_DEVICE=1.
+bluez = [
+    "PyGObject>=3.50",
+]
 dev = [
     "ruff",
 ]

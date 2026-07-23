@@ -3,11 +3,11 @@
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from . import obex, pbap
 from ._vendor.nobex import headers
 from ._vendor.nobex.xml_helper import parse_xml
+from .db import Message
 
 _SYNCED_FOLDERS = ("inbox", "sent")
 
@@ -16,17 +16,6 @@ _MAP_TARGET_UUID = bytes.fromhex("bb582b40420c11dbb0de0800200c9a66")
 
 # len("BEGIN:MSG\r\n") + len("\r\n") + len("END:MSG\r\n")
 _MSG_CONTAINER_LEN = 22
-
-
-@dataclass
-class Message:
-    handle: str
-    folder: str
-    datetime: str
-    sender_addressing: str
-    recipient_addressing: str
-    text: str
-    local_read: bool = False
 
 
 def _parse_bmessage_text(data: bytes) -> str | None:

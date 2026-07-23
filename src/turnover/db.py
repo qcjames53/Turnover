@@ -5,8 +5,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import migrations
-from .map import Message
 from .pbap import Contact
+
+
+@dataclass
+class Message:
+    handle: str
+    folder: str
+    datetime: str
+    sender_addressing: str
+    recipient_addressing: str
+    text: str
+    local_read: bool = False
 
 
 @dataclass

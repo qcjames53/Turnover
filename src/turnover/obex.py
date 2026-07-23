@@ -1,12 +1,13 @@
 import time
+from typing import Any
 
+from . import _fake_device
 from ._vendor.nobex import headers
-from ._vendor.nobex.client import Client
 
 _CONNECT_RETRY_DELAY = 0.5
 
 
-def connect(address: str, channel: int, target_uuid: bytes, path_segments: tuple[str, ...] = ()) -> Client:
+def connect(address: str, channel: int, target_uuid: bytes, path_segments: tuple[str, ...] = ()) -> Any:
     """
     Opens an OBEX session against `target_uuid` then navigates into `path_segments` via setpath.
 
@@ -16,6 +17,18 @@ def connect(address: str, channel: int, target_uuid: bytes, path_segments: tuple
     :param path_segments: Path segments to navigate into via setpath, in order.
     :returns: The connected Client.
     """
+    if _fake_device.enabled():
+        client = _fake_device.FakeDevice().obex_client(target_uuid)
+        for segment in path_segments:
+            client.setpath(segment)
+        return client
+
+    # Imported here, not at module level, so this module doesn't require BlueZ/Linux
+    # socket support to import (e.g. running with TURNOVER_FAKE_DEVICE=1 on macOS) --
+    # nOBEX's bluez_helper touches socket.BDADDR_ANY at import time, which only exists
+    # on Linux.
+    from ._vendor.nobex.client import Client
+
     client = Client(address, channel)
     try:
         client.connect(header_list=[headers.Target(target_uuid)])

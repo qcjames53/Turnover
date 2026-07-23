@@ -1,12 +1,14 @@
 """Runs once at the start of every command, before any db access.
 
-Applies pending schema migrations and a quick auto-sync (see
-config.DEFAULT_SETTINGS's auto_sync) in parallel -- a migration check is a
-handful of local sqlite reads, auto-sync is a real BT round trip, and
-neither should block command startup waiting on the other. In practice,
-auto-sync still waits on the migration result before touching the db
-itself (it needs the schema to exist to read known handles), so today the
-overlap only actually buys time during the BT round trip itself.
+Applies pending schema migrations, a quick auto-sync (see config.py's
+"auto_sync" setting), and config's "auto"-valued setting resolution (see
+config.warm()) all in parallel -- a migration check is a handful of local
+sqlite reads, auto-sync is a real BT round trip, and warming config means
+a GNOME D-Bus round trip and a terminal ioctl, so none of the three should
+block command startup waiting on the others. In practice, auto-sync still
+waits on the migration result before touching the db itself (it needs the
+schema to exist to read known handles), so today the overlap only
+actually buys time during the BT round trip and config warm-up.
 """
 
 import concurrent.futures
@@ -29,8 +31,7 @@ def _quick_sync(migration_job: concurrent.futures.Future) -> None:
     :param migration_job: Future for the concurrently-running migration -- waited on before any
         db access, since this needs the schema to already exist.
     """
-    settings = config.get_settings()
-    auto_sync = settings.get("auto_sync", "off")
+    auto_sync = config.get("auto_sync")
     if auto_sync == "off":
         return
 
@@ -54,8 +55,10 @@ def _quick_sync(migration_job: concurrent.futures.Future) -> None:
 
 
 def preflight() -> None:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         migration_job = pool.submit(db.migrate)
         quick_sync_job = pool.submit(_quick_sync, migration_job)
+        config_warm_job = pool.submit(config.warm)
         migration_job.result()
         quick_sync_job.result()
+        config_warm_job.result()

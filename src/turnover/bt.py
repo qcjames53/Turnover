@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 
-from gi.repository import Gio, GLib
+from . import _fake_device
 
 # https://www.bluetooth.com/specifications/specs/html/?src=MAP_v1.4.3/out/en/index-en.html
 # https://www.bluetooth.com/specifications/specs/html/?src=pbap-v1-2-3_1756156381/PBAP_v1.2.3/out/en/index-en.html
@@ -20,6 +20,11 @@ class PairedDevice:
 
 
 def _get_managed_objects() -> dict:
+    # Imported here rather than at module level so this module -- and anything that
+    # merely imports it without calling paired_devices() -- doesn't require PyGObject
+    # to be installed (e.g. running with TURNOVER_FAKE_DEVICE=1 on a non-Linux box).
+    from gi.repository import Gio, GLib
+
     connection = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
     reply = connection.call_sync(
         "org.bluez",
@@ -40,6 +45,9 @@ def paired_devices() -> list[PairedDevice]:
     """
     Returns paired devices, flagging which advertise MAP/PBAP UUIDs.
     """
+    if _fake_device.enabled():
+        return [PairedDevice(**_fake_device.FakeDevice().paired_device_fields())]
+
     devices = []
     for _path, interfaces in _get_managed_objects().items():
         props = interfaces.get("org.bluez.Device1")

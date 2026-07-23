@@ -1,11 +1,37 @@
+from datetime import datetime, timedelta
+import re
+import textwrap
+from wcwidth import wcswidth
+
+from .. import config, pbap
+from . import utils
+
 # Padding constants
 _MIN_WIDTH_MONOGRAM_COL = 7
 _MIN_WIDTH_TIMESTAMP_COL = 7  # Not enforced if timestamp column goes unrendered
 _MIN_DATETIME_TERMINAL_WIDTH = 50
 
-_REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD = 20  # in minutes
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD = 1201  # in seconds
+_COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD = 1201 # in seconds
 _CONTACT_MONOGRAM = "[{name}]"
 _USER_MONOGRAM = utils.colorize("[YOU]", utils.ANSI_CYAN)
+
+
+def _actual_width(text: str) -> int:
+    return wcswidth(_ANSI_RE.sub("", text))
+
+
+def _conversation_header(number: str, name: str | None = None):
+    formatted_number = pbap.format_phone_display(number)
+    center_text = f"  {name} ({formatted_number})  "
+    padded = center_text.center(config.get("terminal_width"), "-")
+    left_dashes, _, right_dashes = padded.partition(center_text)
+    return (
+        utils.colorize(left_dashes, utils.ANSI_GREY)
+        + utils.colorize(center_text, utils.ANSI_RESET)
+        + utils.colorize(right_dashes, utils.ANSI_GREY)
+    )
 
 
 def _monogram(name: str) -> str:
@@ -25,10 +51,13 @@ def _datetime(message_datetime: datetime, previous_message_datetime: datetime | 
     dt_format = config.get("datetime_format")
     dt_visibility  = config.get("datetime_visibility")
     
-    dt_diff = message_datetime - previous_message_datetime
-
-    if dt_visibility == "off" or (dt_visibility == "reduced" and dt_diff < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD):
+    if dt_visibility == "off":
         return
+
+    if previous_message_datetime:
+        dt_diff = message_datetime - previous_message_datetime
+        if dt_visibility == "reduced" and dt_diff.total_seconds() < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD:
+            return
 
     date_string = ""
     time_string = ""
@@ -36,7 +65,7 @@ def _datetime(message_datetime: datetime, previous_message_datetime: datetime | 
 
     if previous_message_datetime is None or message_datetime.date() != previous_message_datetime.date():
         if message_datetime.date() == today:
-            date_string = "Today"
+            date_string = "Today "
         elif dt_format == "rfc3339":
             date_string = message_datetime.strftime("%Y-%m-%d ") 
         elif message_datetime.date().year == today.year:
@@ -45,17 +74,61 @@ def _datetime(message_datetime: datetime, previous_message_datetime: datetime | 
             date_string = message_datetime.strftime("%b %d %Y ")
         
     if dt_format == "12h":
-        time_string = message_datetime.strftime("%I:%M%P")
+        time_string = message_datetime.strftime("%I:%M%p ").lower()  # %P doesn't seem to work?
     else:
-        time_string = message_datetime.strftime("%H:%M")
+        time_string = message_datetime.strftime("%H:%M ")
 
     return utils.colorize(date_string + time_string, utils.ANSI_GREY)
 
 
-def get_conversation_string(conversations, width: int = 80):
-    pass
+def get_conversation_string(conversations):
+    terminal_width = config.get("terminal_width")
+    is_cosy = config.get("layout") == "cosy"
+    is_rendering_dt = terminal_width > _MIN_DATETIME_TERMINAL_WIDTH
+    output: str = ""
+    for c in conversations:
+        contact_monogram: str = _monogram(c.contact_name)
+
+        if is_cosy: output += "\n"
+        output += _conversation_header(c.address, c.contact_name) + "\n"
+        if is_cosy: output += "\n"
+
+        prev_dt: datetime | None = None
+        for m in c.messages:
+            is_outgoing = m.folder == "sent"
+            monogram = (_USER_MONOGRAM if is_outgoing else contact_monogram)
+            monogram_width = _actual_width(monogram)
+
+            dt = datetime.strptime(m.datetime, "%Y%m%dT%H%M%S")
+            dt_string = _datetime(dt, prev_dt) if is_rendering_dt else ""
+            dt_width = _actual_width(dt_string)
+            if is_rendering_dt and prev_dt and (dt - prev_dt).total_seconds() > _COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD:
+                output += "\n"
+            prev_dt = dt
+
+            left_padding = max(monogram_width + 2, _MIN_WIDTH_MONOGRAM_COL)
+            right_padding = max(dt_width + 2, _MIN_WIDTH_TIMESTAMP_COL) if is_rendering_dt else 2
+            remaining_space = terminal_width - left_padding - right_padding
+
+            lines = textwrap.wrap(m.text, width=remaining_space) or [""]
+            padded_monogram = monogram + " " * (left_padding - monogram_width)
+
+            first_line = padded_monogram + lines[0]
+            if dt_string:
+                # Right-align against the line's *actual* width, not the right_padding budget --
+                # lines[0] is usually shorter than remaining_space (word-wrap rarely lands exactly
+                # on the boundary), so a fixed-width column would leave dt_string floating right
+                # after the text instead of flush against the terminal edge.
+                gap = terminal_width - _actual_width(first_line) - dt_width
+                first_line += " " * max(gap, 1) + dt_string
+            lines[0] = first_line
+            lines[1:] = [" " * left_padding + line for line in lines[1:]]
+
+            output += "\n".join(lines) + "\n"
+
+    return output
 
 
-def get_output_string(addresses: list[str], width: int = 80)
+def get_output_string(addresses: list[str]):
     return get_conversation_string()
     
