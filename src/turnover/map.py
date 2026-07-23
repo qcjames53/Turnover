@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from . import obex
+from . import obex, pbap
 from ._vendor.nobex import headers
 from ._vendor.nobex.xml_helper import parse_xml
 
@@ -105,8 +105,8 @@ def sync_messages(
                             handle=handle,
                             folder=folder,
                             datetime=attrib.get("datetime", ""),
-                            sender_addressing=attrib.get("sender_addressing", ""),
-                            recipient_addressing=attrib.get("recipient_addressing", ""),
+                            sender_addressing=pbap.canonicalize_number(attrib.get("sender_addressing", "")),
+                            recipient_addressing=pbap.canonicalize_number(attrib.get("recipient_addressing", "")),
                             text=message_text,
                         )
                     )

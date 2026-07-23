@@ -1,3 +1,19 @@
+# datetime_format can be:
+#   - auto (12h or 24h) DEFAULT
+#   - 12h (Jan 1, 1970 12:00am)
+#   - 24h (Jan 1, 1970 00:00)
+#   - rfc3339 (1970-01-01 00:00)
+
+# datetime_visibility can be:
+#   - off
+#   - reduced (no time displayed if within _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD of last message)
+#   - full DEFAULT
+
+# layout can be:
+#   - compact
+#   - cosy DEFAULT
+
+
 """Persisted app configuration: which phone to talk to, its cached RFCOMM
 channels, and user-editable settings (see DEFAULT_SETTINGS).
 """

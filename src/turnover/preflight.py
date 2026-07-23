@@ -15,8 +15,8 @@ from . import config, db
 from . import map as map_
 from ._vendor.nobex.common import OBEXError
 
-# Mirrors cli.py's _LINK_ERRORS -- transient Bluetooth link trouble during a
-# background auto-sync shouldn't block the command the user actually ran.
+# Transient Bluetooth link trouble during a background auto-sync shouldn't
+# block the command the user actually ran.
 _LINK_ERRORS = (OSError, OBEXError)
 
 

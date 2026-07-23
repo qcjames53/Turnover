@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "turnover"
 version = "0.1.0"
-description = "Sync SMS/MMS and contacts from a paired iPhone over Bluetooth MAP/PBAP"
+description = "Send and receive iMessages in your terminal via Bluetooth"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-turnover = "turnover.cli:main"
+turnover = "turnover.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

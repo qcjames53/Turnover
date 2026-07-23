@@ -1,7 +1,6 @@
 # Phone book access protocol
 # https://www.bluetooth.com/specifications/specs/html/?src=pbap-v1-2-3_1756156381/PBAP_v1.2.3/out/en/index-en.html
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -19,21 +18,23 @@ _PBAP_TARGET_UUID = bytes.fromhex("796135f0f0c511d809660800200c9a66")
 class Contact:
     handle: str
     name: str
-    number: str | None = None
+    numbers: list[str]
 
 
-def _extract_tel(vcard_text: str) -> str | None:
+def _extract_tels(vcard_text: str) -> list[str]:
     """
-    Extracts the contact's phone number from a vcard
+    Extracts the contact's phone number(s) from a vcard -- a contact can carry more than one TEL
+    line (mobile, home, work, ...).
 
     :param vcard_text: Body contents of the vcard (string)
-    :returns: Contents of the TEL line as reported by the phone; None if no line found
+    :returns: Contents of each TEL line as reported by the phone, in vcard order.
     """
+    tels = []
     for line in vcard_text.splitlines():
         # TEL lines can carry type params, e.g. "TEL;CELL:(513) 889-6098".
         if line.startswith("TEL") and ":" in line:
-            return line.split(":", 1)[1].strip()
-    return None
+            tels.append(line.split(":", 1)[1].strip())
+    return tels
 
 
 def probe(address: str, channel: int) -> None:
@@ -76,9 +77,9 @@ def sync_contacts(
         for done, (handle, name) in enumerate(cards, start=1):
             if handle not in known_handles:
                 _hdrs, vcard = client.get(handle, header_list=[headers.Type(b"x-bt/vcard")])
-                tel = _extract_tel(vcard.decode("utf-8", errors="replace"))
-                number = normalize_phone_number(tel) if tel else None
-                contacts.append(Contact(handle=handle, name=name, number=number))
+                tels = _extract_tels(vcard.decode("utf-8", errors="replace"))
+                numbers = [canonicalize_number(tel) for tel in tels]
+                contacts.append(Contact(handle=handle, name=name, numbers=numbers))
             if on_progress:
                 on_progress(done, total)
     finally:
@@ -87,17 +88,21 @@ def sync_contacts(
     return contacts
 
 
-def normalize_phone_number(number: str) -> str:
+def canonicalize_number(number: str) -> str:
     """
-    Strips PBAP TEL formatting down to bare digits
+    Canonicalizes a phone number to E.164 (e.g. +15551234567)
 
-    :param number: TEL line content (no TEL/CELL header)
-    :returns: Unformatted phone number (e.g. 18008675309)
+    :param number: Raw addressing/TEL value, in whatever formatting the source reported.
+    :returns: E.164-formatted number, or `number` unchanged if it isn't a valid phone number
+        (SMS short codes, iMessage email addresses).
     """
-    digits = re.sub(r"[^\d+]", "", number)
-    if digits.count("+") > 1 or "+" in digits[1:]:
-        digits = digits.replace("+", "")
-    return digits
+    try:
+        parsed = phonenumbers.parse(number, "US")
+    except phonenumbers.NumberParseException:
+        return number
+    if not phonenumbers.is_valid_number(parsed):
+        return number
+    return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
 
 
 def looks_like_phone_number(number: str) -> bool:

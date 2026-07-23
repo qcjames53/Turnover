@@ -8,10 +8,16 @@ registering it in `_MIGRATIONS` below, keyed on that same timestamp.
 
 import sqlite3
 
-from . import m20260720194244_initial
+from . import (
+    m20260720194244_initial,
+    m20260722151200_conversation_addressing,
+    m20260722160000_contact_numbers,
+)
 
 _MIGRATIONS = [
     (20260720194244, m20260720194244_initial),
+    (20260722151200, m20260722151200_conversation_addressing),
+    (20260722160000, m20260722160000_contact_numbers),
 ]
 
 
