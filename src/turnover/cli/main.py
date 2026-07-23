@@ -2,7 +2,7 @@ import argparse
 import sys
 
 from .. import __version__, preflight
-from . import onboarding
+from . import onboarding, utils
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,7 +22,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    preflight.preflight()
+    with utils.Spinner():
+        preflight.preflight()
 
     if args.command == "setup":
         onboarding.run_onboarding_wizard()

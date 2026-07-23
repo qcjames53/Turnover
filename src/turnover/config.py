@@ -15,30 +15,61 @@
 #   - full DEFAULT
 
 # layout can be:
+#   - irc
 #   - compact
 #   - cosy DEFAULT
+#   - bubbles
 
 # messages_displayed is how many messages back `turnover <name>` shows. DEFAULT 8
+#   - 8
 
 # terminal_width can be:
 #   - auto DEFAULT (resolves via shutil.get_terminal_size())
-#   - a positive int, to hardcode the width instead
+#   - 40
+#   - 80
+#   - 120
 
 
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import db
 
-_DEFAULTS = {
-    "messages_displayed": 8,
-    "datetime_format": "auto",
-    "datetime_visibility": "full",
-    "terminal_width": "auto",
-    "auto_sync": "incremental",
-    "layout": "cosy",
+
+@dataclass
+class Setting:
+    default: str
+    options: list[str]
+
+
+CONFIG_VALUES: dict[str, Setting] = {
+    "auto_sync": Setting(
+        default="incremental",
+        options=["off", "incremental", "full"]
+    ),
+    "datetime_format": Setting(
+        default="auto",
+        options=["auto", "12h", "24h", "rfc3339"]
+    ),
+    "datetime_visibility": Setting(
+        default="full",
+        options=["off", "reduced", "full"]
+    ),
+    "layout": Setting(
+        default="cosy",
+        options=["irc", "compact", "cosy", "bubbles"]
+    ),
+    "messages_displayed": Setting(
+        default="8",
+        options=["8"]
+    ),
+    "terminal_width": Setting(
+        default="auto",
+        options=["auto", "40", "80", "120"]
+    ),
 }
 
 _cache: dict | None = None
@@ -66,7 +97,10 @@ def _read() -> dict:
     return _cache
 
 
-def _write() -> None:
+def write() -> None:
+    """
+    Persists the in-memory config cache to disk, overwriting the config file.
+    """
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
@@ -89,23 +123,23 @@ def save(new_config: dict) -> None:
     """
     global _cache
     _cache = new_config
-    _write()
+    write()
 
 
 def get(option: str):
     """
-    Returns `option`'s persisted value, or its default (_DEFAULTS) if unset.
+    Returns `option`'s persisted value, or its default (CONFIG_VALUES) if unset.
 
-    :param option: One of _DEFAULTS's keys.
+    :param option: One of CONFIG_VALUES's setting names.
     :returns: The persisted value if the config file has one for `option`, otherwise the default.
         "auto" datetime_format/terminal_width are resolved to a concrete value before being
         returned.
     """
-    if option not in _DEFAULTS:
+    if option not in CONFIG_VALUES:
         raise KeyError(f"Unknown config option: {option!r}")
 
     settings = _read().get("settings", {})
-    value = settings.get(option, _DEFAULTS[option])
+    value = settings.get(option, CONFIG_VALUES[option].default)
 
     if value == "auto":
         if option == "datetime_format":
@@ -117,38 +151,21 @@ def get(option: str):
 
 def set(option: str, value) -> None:
     """
-    Persists `option` = `value`, on disk and in the in-memory cache used by get().
+    Sets `option` = `value` in the in-memory cache used by get()
 
-    :param option: One of _DEFAULTS's keys.
-    :param value: Value to persist.
+    :param option: One of CONFIG_VALUES's setting names.
+    :param value: Value to set.
     """
-    if option not in _DEFAULTS:
+    if option not in CONFIG_VALUES:
         raise KeyError(f"Unknown config option: {option!r}")
 
     config = _read()
     config.setdefault("settings", {})[option] = value
-    _write()
 
 
 def _resolve_clock_format() -> str:
     """
-    Resolves "auto" datetime_format via GNOME's own clock-format gsetting
-    (org.gnome.desktop.interface) -- already have PyGObject as a dependency
-    for BlueZ D-Bus, so this is free. Falls back to "12h" if the schema
-    isn't installed (non-GNOME session) or anything else goes wrong; this
-    is a display nicety, never worth hard-failing a command over.
-
-    GNOME ships a locale-conditional override for this key (24h globally,
-    12h specifically for e.g. en_US) -- but Python doesn't call setlocale()
-    at startup the way a real C program (like the `gsettings` CLI) does, so
-    without this, GLib can't see the process is actually running as
-    en_US and silently resolves the wrong (non-locale-specific) default.
-    Confirmed directly: `gsettings get ... clock-format` said '12h' while
-    Gio.Settings.get_string() said '24h' in the same shell/env, and calling
-    setlocale() first made them agree. Safe/idempotent to call repeatedly.
-
-    Cached in `_resolved_clock_format` after the first call -- it's a D-Bus
-    round trip, and the answer can't change mid-process.
+    Resolves "auto" datetime_format
 
     :returns: "12h" or "24h".
     """
@@ -191,10 +208,7 @@ def _resolve_terminal_width() -> int:
 def warm() -> None:
     """
     Eagerly resolves every "auto"-valued setting (datetime_format, terminal_width), so later
-    get() calls never pay for a GNOME D-Bus round trip or terminal ioctl mid-render. Meant to be
-    called once, early, alongside preflight's other startup work -- see preflight.py -- so those
-    costs overlap with the migration/auto-sync I/O already happening there instead of stalling
-    the first render call.
+    get() calls never pay for a GNOME D-Bus round trip or terminal ioctl mid-render.
     """
     get("datetime_format")
     get("terminal_width")

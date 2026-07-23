@@ -13,9 +13,9 @@ class Message:
     handle: str
     folder: str
     datetime: str
-    sender_addressing: str
-    recipient_addressing: str
     text: str
+    sender_addressing: str = ""
+    recipient_addressing: str = ""
     local_read: bool = False
 
 

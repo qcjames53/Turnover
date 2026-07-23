@@ -16,6 +16,9 @@ _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD = 1201  # in seconds
 _COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD = 1201 # in seconds
 _CONTACT_MONOGRAM = "[{name}]"
 _USER_MONOGRAM = utils.colorize("[YOU]", utils.ANSI_CYAN)
+_BLOCK_INDICATOR_TOP = utils.colorize("╭ ", utils.ANSI_GREY)
+_BLOCK_INDICATOR_MID = utils.colorize("│ ", utils.ANSI_GREY)
+_BLOCK_INDICATOR_BTM = utils.colorize("╰ ", utils.ANSI_GREY)
 
 
 def _actual_width(text: str) -> int:
@@ -102,7 +105,7 @@ def get_conversation_string(conversations):
             dt = datetime.strptime(m.datetime, "%Y%m%dT%H%M%S")
             dt_string = _datetime(dt, prev_dt) if is_rendering_dt else ""
             dt_width = _actual_width(dt_string)
-            if is_rendering_dt and prev_dt and (dt - prev_dt).total_seconds() > _COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD:
+            if is_cosy and  is_rendering_dt and prev_dt and (dt - prev_dt).total_seconds() > _COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD:
                 output += "\n"
             prev_dt = dt
 
@@ -110,19 +113,20 @@ def get_conversation_string(conversations):
             right_padding = max(dt_width + 2, _MIN_WIDTH_TIMESTAMP_COL) if is_rendering_dt else 2
             remaining_space = terminal_width - left_padding - right_padding
 
-            lines = textwrap.wrap(m.text, width=remaining_space) or [""]
-            padded_monogram = monogram + " " * (left_padding - monogram_width)
+            lines = []
+            for paragraph in m.text.split("\n"):
+                lines.extend(textwrap.wrap(paragraph, width=remaining_space) or [""])
+            
+            if len(lines) == 1:
+                lines[0] = monogram + " " * (left_padding - monogram_width) + lines[0]
+            else:
+                lines[0] = monogram + " " * (left_padding - monogram_width - _actual_width(_BLOCK_INDICATOR_TOP)) + _BLOCK_INDICATOR_TOP + lines[0]
+                lines[1:-1] = [" " * (left_padding - _actual_width(_BLOCK_INDICATOR_MID)) + _BLOCK_INDICATOR_MID + line for line in lines[1:-1]]
+                lines[-1] = " " * (left_padding - _actual_width(_BLOCK_INDICATOR_BTM)) + _BLOCK_INDICATOR_BTM + lines[-1]
 
-            first_line = padded_monogram + lines[0]
-            if dt_string:
-                # Right-align against the line's *actual* width, not the right_padding budget --
-                # lines[0] is usually shorter than remaining_space (word-wrap rarely lands exactly
-                # on the boundary), so a fixed-width column would leave dt_string floating right
-                # after the text instead of flush against the terminal edge.
-                gap = terminal_width - _actual_width(first_line) - dt_width
-                first_line += " " * max(gap, 1) + dt_string
-            lines[0] = first_line
-            lines[1:] = [" " * left_padding + line for line in lines[1:]]
+            if is_rendering_dt and dt_string:
+                gap = max(terminal_width - _actual_width(lines[0]) - dt_width, 0)
+                lines[0] += " " * gap + dt_string       
 
             output += "\n".join(lines) + "\n"
 
