@@ -1,4 +1,5 @@
 import itertools
+import shutil
 import sys
 import threading
 
@@ -11,6 +12,10 @@ _SPINNER_DELAY = 0.0667  # in seconds
 
 def colorize(text: str, code: str) -> str:
     return f"{code}{text}{ANSI_RESET}" if sys.stdout.isatty() else text
+
+
+def terminal_width() -> int:
+    return shutil.get_terminal_size().columns if sys.stdout.isatty() else 80
 
 
 class Spinner:

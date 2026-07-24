@@ -28,7 +28,7 @@ def _actual_width(text: str) -> int:
 def _conversation_header(number: str, name: str | None = None):
     formatted_number = pbap.format_phone_display(number)
     center_text = f"  {name} ({formatted_number})  "
-    padded = center_text.center(config.get("terminal_width"), "-")
+    padded = center_text.center(utils.terminal_width(), "-")
     left_dashes, _, right_dashes = padded.partition(center_text)
     return (
         utils.colorize(left_dashes, utils.ANSI_GREY)
@@ -52,14 +52,14 @@ def _monogram(name: str) -> str:
 
 def _datetime(message_datetime: datetime, previous_message_datetime: datetime | None = None) -> str | None:
     dt_format = config.get("datetime_format")
-    dt_visibility  = config.get("datetime_visibility")
-    
-    if dt_visibility == "off":
+    dt_is_reduced = dt_format == "auto (reduced)" or dt_format == "12h (reduced)" or dt_format == "24h (reduced)"
+
+    if dt_format == "off":
         return
 
-    if previous_message_datetime:
+    if previous_message_datetime and dt_is_reduced:
         dt_diff = message_datetime - previous_message_datetime
-        if dt_visibility == "reduced" and dt_diff.total_seconds() < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD:
+        if dt_diff.total_seconds() < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD:
             return
 
     date_string = ""
@@ -67,17 +67,17 @@ def _datetime(message_datetime: datetime, previous_message_datetime: datetime | 
     today = datetime.now().date()
 
     if previous_message_datetime is None or message_datetime.date() != previous_message_datetime.date():
-        if message_datetime.date() == today:
-            date_string = "Today "
-        elif dt_format == "rfc3339":
+        if dt_format == "rfc3339":
             date_string = message_datetime.strftime("%Y-%m-%d ") 
+        elif message_datetime.date() == today:
+            date_string = "Today "
         elif message_datetime.date().year == today.year:
             date_string = message_datetime.strftime("%b %d ")
         else:
             date_string = message_datetime.strftime("%b %d %Y ")
         
-    if dt_format == "12h":
-        time_string = message_datetime.strftime("%I:%M%p ").lower()  # %P doesn't seem to work?
+    if dt_format == "12h" or dt_format == "12h (reduced)":
+        time_string = message_datetime.strftime("%-I:%M%p ").lower()  # %P doesn't seem to work?
     else:
         time_string = message_datetime.strftime("%H:%M ")
 
@@ -85,7 +85,7 @@ def _datetime(message_datetime: datetime, previous_message_datetime: datetime | 
 
 
 def get_conversation_string(conversations):
-    terminal_width = config.get("terminal_width")
+    terminal_width = utils.terminal_width()
     is_cosy = config.get("layout") == "cosy"
     is_rendering_dt = terminal_width > _MIN_DATETIME_TERMINAL_WIDTH
     output: str = ""

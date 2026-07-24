@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,11 +19,7 @@ CONFIG_VALUES: dict[str, Setting] = {
     ),
     "datetime_format": Setting(
         default="auto",
-        options=["auto", "12h", "24h", "rfc3339"]
-    ),
-    "datetime_visibility": Setting(
-        default="full",
-        options=["off", "reduced", "full"]
+        options=["off", "auto (reduced)", "auto", "12h (reduced)", "12h", "24h (reduced)", "24h", "rfc3339"]
     ),
     "layout": Setting(
         default="cosy",
@@ -34,16 +29,11 @@ CONFIG_VALUES: dict[str, Setting] = {
         default="8",
         options=["8"]
     ),
-    "terminal_width": Setting(
-        default="auto",
-        options=["auto", "40", "80", "120"]
-    ),
 }
 
 
 _cache: dict | None = None
 _resolved_clock_format: str | None = None
-_resolved_terminal_width: int | None = None
 
 
 def _config_path() -> Path:
@@ -101,8 +91,7 @@ def get(option: str):
 
     :param option: One of CONFIG_VALUES's setting names.
     :returns: The persisted value if the config file has one for `option`, otherwise the default.
-        "auto" datetime_format/terminal_width are resolved to a concrete value before being
-        returned.
+        "auto" datetime_format is resolved to a concrete value before being returned.
     """
     if option not in CONFIG_VALUES:
         raise KeyError(f"Unknown config option: {option!r}")
@@ -113,8 +102,6 @@ def get(option: str):
     if value == "auto":
         if option == "datetime_format":
             return _resolve_clock_format()
-        if option == "terminal_width":
-            return _resolve_terminal_width()
     return value
 
 
@@ -161,35 +148,20 @@ def _resolve_clock_format() -> str:
     return _resolved_clock_format
 
 
-def _resolve_terminal_width() -> int:
-    """
-    Resolves "auto" terminal_width via shutil.get_terminal_size() -- cached after the first call
-    since a single CLI invocation's terminal doesn't resize out from under it.
-
-    :returns: Terminal width in columns.
-    """
-    global _resolved_terminal_width
-    if _resolved_terminal_width is None:
-        _resolved_terminal_width = shutil.get_terminal_size().columns
-    return _resolved_terminal_width
-
-
 def warm() -> None:
     """
-    Eagerly resolves every "auto"-valued setting (datetime_format, terminal_width), so later
-    get() calls never pay for a GNOME D-Bus round trip or terminal ioctl mid-render.
+    Eagerly resolves every "auto"-valued setting (datetime_format), so later get() calls never pay
+    for a GNOME D-Bus round trip mid-render.
     """
     get("datetime_format")
-    get("terminal_width")
 
 
 def clear() -> None:
     """
     Wipes all cached data: the config file, the in-memory config cache, and the synced-data db.
     """
-    global _cache, _resolved_clock_format, _resolved_terminal_width
+    global _cache, _resolved_clock_format
     _config_path().unlink(missing_ok=True)
     _cache = None
     _resolved_clock_format = None
-    _resolved_terminal_width = None
     db.clear()
