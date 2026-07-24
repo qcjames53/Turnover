@@ -134,5 +134,5 @@ def get_conversation_string(conversations):
 
 
 def get_output_string(addresses: list[str]):
-    return get_conversation_string()
+    pass
     

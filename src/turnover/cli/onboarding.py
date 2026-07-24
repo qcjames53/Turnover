@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from ..db import Conversation, Message
+from .. import config
 from . import render_messages
 
 _DEMO_CONVERSATION = Conversation(
@@ -52,5 +53,20 @@ _DEMO_CONVERSATION = Conversation(
     ],
 )
 
-def run_onboarding_wizard(options: list | None = None) -> None:
+
+def get_settings_string():
+    output = "Turnover settings\n"
+
+    for s_name, s in config.CONFIG_VALUES.items():
+        output += f"{s_name} {s.default}\n"
+    
+    return output
+
+
+def display_interactive_settings():
+    print(get_settings_string())
     print(render_messages.get_conversation_string([_DEMO_CONVERSATION]))
+
+
+def run_onboarding_wizard(options: list | None = None) -> None:
+    display_interactive_settings()

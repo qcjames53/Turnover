@@ -1,35 +1,3 @@
-# auto_sync can be:
-#   - off (no automatic sync before a command runs)
-#   - incremental DEFAULT (only sync messages not already cached)
-#   - full (always resync everything, same as `sync --full`)
-
-# datetime_format can be:
-#   - auto (12h or 24h) DEFAULT
-#   - 12h (Jan 1, 1970 12:00am)
-#   - 24h (Jan 1, 1970 00:00)
-#   - rfc3339 (1970-01-01 00:00)
-
-# datetime_visibility can be:
-#   - off
-#   - reduced (no time displayed if within _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD of last message)
-#   - full DEFAULT
-
-# layout can be:
-#   - irc
-#   - compact
-#   - cosy DEFAULT
-#   - bubbles
-
-# messages_displayed is how many messages back `turnover <name>` shows. DEFAULT 8
-#   - 8
-
-# terminal_width can be:
-#   - auto DEFAULT (resolves via shutil.get_terminal_size())
-#   - 40
-#   - 80
-#   - 120
-
-
 import json
 import os
 import shutil
@@ -71,6 +39,7 @@ CONFIG_VALUES: dict[str, Setting] = {
         options=["auto", "40", "80", "120"]
     ),
 }
+
 
 _cache: dict | None = None
 _resolved_clock_format: str | None = None
