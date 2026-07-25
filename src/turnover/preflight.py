@@ -60,7 +60,7 @@ def preflight() -> None:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             migration_job = pool.submit(db.migrate)
             quick_sync_job = pool.submit(_quick_sync, migration_job)
-            clock_format_warm_job = pool.submit(utils.warm)
+            clock_format_warm_job = pool.submit(utils.resolve_datetime_format)
             migration_job.result()
             clock_format_warm_job.result()
         synced_count = quick_sync_job.result()

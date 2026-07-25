@@ -3,7 +3,7 @@ import re
 import textwrap
 from wcwidth import wcswidth
 
-from .. import config, pbap
+from .. import config, db, pbap
 from . import utils
 
 # Padding constants
@@ -66,24 +66,30 @@ def _datetime(message_datetime: datetime, previous_message_datetime: datetime | 
 
 
 def _date(message_datetime: datetime, previous_message_datetime: datetime | None) -> str | None:
-    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
+    dt_format = utils.resolve_datetime_format()
+    is_irc = config.get("layout") == "irc"
     
     if dt_format == "off":
         return None
 
-    if previous_message_datetime and dt_format.find("(reduced)") != -1 and \
-        (message_datetime - previous_message_datetime).total_seconds() < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD:
-        return None
+    if is_irc:
+        if previous_message_datetime and message_datetime.date() == previous_message_datetime.date():
+            return None
+        if dt_format == "rfc3339":
+            return utils.colorize(message_datetime.strftime("%Y-%m-%d"), utils.ANSI_GREY)
+        if message_datetime.date().year == datetime.now().date().year:
+            return  utils.colorize(message_datetime.strftime("%A, %B %d"), utils.ANSI_GREY)
+        return  utils.colorize(message_datetime.strftime("%A, %B %d, %Y"), utils.ANSI_GREY)
 
     if dt_format == "rfc3339":
         return utils.colorize(message_datetime.strftime("%Y-%m-%d"), utils.ANSI_GREY)
-    elif previous_message_datetime is None or message_datetime.date() != previous_message_datetime.date():
+    if previous_message_datetime is None or message_datetime.date() != previous_message_datetime.date():
         if message_datetime.date() == datetime.now().date():
             return utils.colorize("Today", utils.ANSI_GREY)
-        elif message_datetime.date().year == datetime.now().date().year:
+        if message_datetime.date().year == datetime.now().date().year:
             return utils.colorize(message_datetime.strftime("%b %d"), utils.ANSI_GREY)
-        else:
-            return utils.colorize(message_datetime.strftime("%b %d %Y"), utils.ANSI_GREY)
+        return utils.colorize(message_datetime.strftime("%b %d %Y"), utils.ANSI_GREY)
+    return None
 
 
 def _time(message_datetime: datetime, previous_message_datetime: datetime | None) -> str | None:
@@ -91,7 +97,7 @@ def _time(message_datetime: datetime, previous_message_datetime: datetime | None
     Clock-only timestamp for the irc layout: just H:M in 12h or 24h form, never a date. Callers
     that want date breaks show them separately rather than inline per-message.
     """
-    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
+    dt_format = utils.resolve_datetime_format()
 
     if dt_format == "off":
         return None
@@ -101,8 +107,8 @@ def _time(message_datetime: datetime, previous_message_datetime: datetime | None
         return None
 
     if dt_format.startswith("12h"):
-        return utils.colorize(message_datetime.strftime("%-I:%M%p ").lower(), utils.ANSI_GREY)
-    return utils.colorize(message_datetime.strftime("%H:%M "), utils.ANSI_GREY)
+        return utils.colorize(message_datetime.strftime("%-I:%M%p").lower(), utils.ANSI_GREY)
+    return utils.colorize(message_datetime.strftime("%H:%M"), utils.ANSI_GREY)
 
 
 def _wrap_message(m, monogram: str, monogram_width: int, left_padding: int, remaining_space: int) -> list[str]:
@@ -127,7 +133,7 @@ def _render_dt_right(conversations, *, blank_line_around_header: bool, gap_thres
     fits) a date/time string right-aligned on each message's first line.
     """
     terminal_width = utils.terminal_width()
-    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
+    dt_format = utils.resolve_datetime_format()
     is_rendering_dt = terminal_width > _MIN_DATETIME_TERMINAL_WIDTH and dt_format != "off"
 
     output = ""
@@ -189,7 +195,7 @@ def _render_irc(conversations) -> str:
     in the log if you want them.
     """
     terminal_width = utils.terminal_width()
-    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
+    dt_format = utils.resolve_datetime_format()
     is_rendering_dt = terminal_width > _MIN_DATETIME_TERMINAL_WIDTH and dt_format != "off"
 
     time_col_width = 0
@@ -201,20 +207,28 @@ def _render_irc(conversations) -> str:
         contact_monogram = _monogram(c.contact_name)
         output += _conversation_header(c.address, c.contact_name) + "\n"
 
+        previous_message_datetime: datetime | None = None
         for m in c.messages:
             is_outgoing = m.folder == "sent"
             monogram = _USER_MONOGRAM if is_outgoing else contact_monogram
             monogram_width = _actual_width(monogram)
-
-            dt = datetime.strptime(m.datetime, "%Y%m%dT%H%M%S")
-            t_string = _irc_time(dt, dt_format) if is_rendering_dt else ""
 
             left_padding = max(monogram_width + 2, _MIN_WIDTH_MONOGRAM_COL)
             remaining_space = terminal_width - left_padding - 1 - time_col_width
 
             lines = _wrap_message(m, monogram, monogram_width, left_padding, remaining_space)
 
-            if time_col_width:
+            if is_rendering_dt:
+                message_datetime = datetime.strptime(m.datetime, "%Y%m%dT%H%M%S")
+                d_string = _date(message_datetime, previous_message_datetime)
+                t_string = _time(message_datetime, previous_message_datetime)
+                if not t_string:
+                    t_string = ""
+                previous_message_datetime = message_datetime
+
+                if d_string:
+                    output += "\n" + d_string + "\n"
+
                 lines[0] = t_string + " " * (time_col_width - _actual_width(t_string)) + lines[0]
                 lines[1:] = [" " * time_col_width + line for line in lines[1:]]
 
@@ -237,5 +251,17 @@ def get_conversation_string(conversations) -> str:
     return renderer(conversations)
 
 
-def get_output_string(addresses: list[str]):
-    pass
+def get_output_string(addresses: list[str]) -> str:
+    """
+    Renders the given conversations, each capped to config's messages_displayed most recent
+    messages -- the cap and time-ascending ordering both happen in the db query, so every layout
+    renders whatever window it's handed as-is.
+
+    :param addresses: Addresses to include; see db.list_conversations.
+    """
+    m_count = config.get("messages_displayed")
+    if m_count == "all":
+        m_count = None
+
+    conversations = db.list_conversations(addresses, messages_per_conversation=m_count)
+    return get_conversation_string(conversations)
