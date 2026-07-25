@@ -37,7 +37,7 @@ def _quick_sync(migration_job: concurrent.futures.Future) -> int:
     if auto_sync == "off":
         return 0
 
-    device = config.load().get("device")
+    device = config.get_linked_device()
     if device is None:
         return 0
 

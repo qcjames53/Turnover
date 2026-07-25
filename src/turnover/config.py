@@ -114,6 +114,22 @@ def set(option: str, value) -> None:
     config.setdefault("settings", {})[option] = value
 
 
+def get_linked_device() -> dict | None:
+    """
+    Returns the persisted linked-device dict ({"address", "mas_channel"}), or None if no device
+    has been linked yet.
+    """
+    return _read().get("device")
+
+
+def set_linked_device(address: str, mas_channel: int) -> None:
+    """
+    Sets the linked device in the in-memory cache used by get_linked_device() (writing to disk is
+    wired up separately, via write()).
+    """
+    _read()["device"] = {"address": address, "mas_channel": mas_channel}
+
+
 def clear() -> None:
     """
     Wipes all cached data: the config file, the in-memory config cache, and the synced-data db.

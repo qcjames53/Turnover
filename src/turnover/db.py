@@ -1,3 +1,4 @@
+import difflib
 import os
 import sqlite3
 from collections.abc import Sequence
@@ -141,6 +142,45 @@ def list_contacts() -> list[Contact]:
         if number is not None:
             contacts[-1].numbers.append(number)
     return contacts
+
+
+def find_contacts(query: str) -> list[Contact]:
+    """
+    Fuzzy-resolves a contact name query against the cached address book. Case-insensitive
+    substring matches (e.g. "jo" -> "John", "Joanna") win outright over typo tolerance; only when
+    none of those hit do we fall back to difflib's closest-name matching, to survive e.g. "jonh".
+
+    :param query: Full or partial contact name, as typed by a user (e.g. "quinn" or "quinn j").
+    :returns: Matching contacts, [] if nothing matches closely enough.
+    """
+    name = query.strip()
+    if not name:
+        return []
+
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT handle FROM contacts WHERE name LIKE ? ESCAPE '\\' ORDER BY name COLLATE NOCASE",
+            (f"%{_escape_like(name)}%",),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    all_contacts = list_contacts()
+
+    if rows:
+        matched_handles = [handle for (handle,) in rows]
+        contacts_by_handle = {c.handle: c for c in all_contacts}
+        return [contacts_by_handle[h] for h in matched_handles if h in contacts_by_handle]
+
+    contacts_by_lower_name = {c.name.lower(): c for c in all_contacts}
+    close_names = difflib.get_close_matches(name.lower(), contacts_by_lower_name.keys(), n=5, cutoff=0.6)
+    return [contacts_by_lower_name[n] for n in close_names]
+
+
+def _escape_like(text: str) -> str:
+    """Escapes SQLite LIKE wildcards (%, _) so a contact name containing them is matched literally."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def known_message_handles() -> set[tuple[str, str]]:
