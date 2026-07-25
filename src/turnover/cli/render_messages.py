@@ -52,53 +52,57 @@ def _monogram(name: str) -> str:
     return _CONTACT_MONOGRAM.format(name=initials_string)
 
 
-def _datetime(message_datetime: datetime, previous_message_datetime: datetime | None = None) -> tuple[str, str] | None:
+def _datetime(message_datetime: datetime, previous_message_datetime: datetime | None = None) -> str | None:
     """
     Full date + time string pair for the "dt on the right" layouts (compact/cosy). Returns None
     when nothing should be rendered for this message: datetime_format is "off", or it's a
     "(reduced)" format and this message landed close enough after the previous one to skip.
     """
-    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
-    dt_is_reduced = dt_format == "auto (reduced)" or dt_format == "12h (reduced)" or dt_format == "24h (reduced)"
+    date = _date(message_datetime, previous_message_datetime)
+    time = _time(message_datetime, previous_message_datetime)
+    if date:
+        return date + " " + time
+    return time
 
+
+def _date(message_datetime: datetime, previous_message_datetime: datetime | None) -> str | None:
+    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
+    
     if dt_format == "off":
         return None
 
-    if previous_message_datetime and dt_is_reduced:
-        dt_diff = message_datetime - previous_message_datetime
-        if dt_diff.total_seconds() < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD:
-            return None
-
-    date_string = ""
-    time_string = ""
-    today = datetime.now().date()
+    if previous_message_datetime and dt_format.find("(reduced)") != -1 and \
+        (message_datetime - previous_message_datetime).total_seconds() < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD:
+        return None
 
     if dt_format == "rfc3339":
-        date_string = message_datetime.strftime("%Y-%m-%d ")
+        return utils.colorize(message_datetime.strftime("%Y-%m-%d"), utils.ANSI_GREY)
     elif previous_message_datetime is None or message_datetime.date() != previous_message_datetime.date():
-        if message_datetime.date() == today:
-            date_string = "Today "
-        elif message_datetime.date().year == today.year:
-            date_string = message_datetime.strftime("%b %d ")
+        if message_datetime.date() == datetime.now().date():
+            return utils.colorize("Today", utils.ANSI_GREY)
+        elif message_datetime.date().year == datetime.now().date().year:
+            return utils.colorize(message_datetime.strftime("%b %d"), utils.ANSI_GREY)
         else:
-            date_string = message_datetime.strftime("%b %d %Y ")
-
-    if dt_format == "12h" or dt_format == "12h (reduced)":
-        time_string = message_datetime.strftime("%-I:%M%p ").lower()  # %P doesn't seem to work?
-    else:
-        time_string = message_datetime.strftime("%H:%M ")
-
-    return utils.colorize(date_string, utils.ANSI_GREY), utils.colorize(time_string, utils.ANSI_GREY)
+            return utils.colorize(message_datetime.strftime("%b %d %Y"), utils.ANSI_GREY)
 
 
-def _irc_time(message_datetime: datetime, dt_format: str) -> str:
+def _time(message_datetime: datetime, previous_message_datetime: datetime | None) -> str | None:
     """
     Clock-only timestamp for the irc layout: just H:M in 12h or 24h form, never a date. Callers
     that want date breaks show them separately rather than inline per-message.
     """
+    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
+
+    if dt_format == "off":
+        return None
+
+    if previous_message_datetime and dt_format.find("(reduced)") != -1 and \
+        (message_datetime - previous_message_datetime).total_seconds() < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD:
+        return None
+
     if dt_format.startswith("12h"):
-        return message_datetime.strftime("%-I:%M%p ").lower()
-    return message_datetime.strftime("%H:%M ")
+        return utils.colorize(message_datetime.strftime("%-I:%M%p ").lower(), utils.ANSI_GREY)
+    return utils.colorize(message_datetime.strftime("%H:%M "), utils.ANSI_GREY)
 
 
 def _wrap_message(m, monogram: str, monogram_width: int, left_padding: int, remaining_space: int) -> list[str]:
