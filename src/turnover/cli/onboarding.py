@@ -1,6 +1,7 @@
 import curses
 import locale
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from wcwidth import wcswidth
@@ -11,10 +12,6 @@ from . import render_messages
 
 _SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 
-_BOX_WIDTH = 40
-_BOX_HEIGHT = 7
-_BOX_BOTTOM_MARGIN = 2  # leaves the box's bottom border one row up from the screen's last row
-
 _TOP_LEFT, _TOP_RIGHT = "╔", "╗"
 _BOTTOM_LEFT, _BOTTOM_RIGHT = "╚", "╝"
 _HORIZONTAL, _VERTICAL = "═", "║"
@@ -22,12 +19,25 @@ _HORIZONTAL, _VERTICAL = "═", "║"
 _PAIR_BOX = 1
 _PAIR_SHADOW = 2
 _PAIR_BACKGROUND = 3
+_PAIR_HIGHLIGHT = 4
 _PAIR_FG_BASE = 10  # 8 consecutive pairs (SGR 30-37) on the default background, from here
 _PAIR_FG_BRIGHT_BASE = 20  # 8 consecutive pairs (SGR 90-97), only used if the terminal has >=16 colors
 
 _bright_supported = False  # set by _wizard() once curses knows the terminal's color count
 
-_WIZARD_OPTIONS = ["auto_sync", "datetime_format", "layout"]
+# (config key, display label) pairs, in the order they appear in the settings box.
+_SETTING_FIELDS: list[tuple[str, str]] = [
+    ("layout", "Layout"),
+    ("datetime_format", "Datetime format"),
+    ("messages_displayed", "Messages shown"),
+    ("auto_sync", "Auto sync"),
+]
+
+_BOX_WIDTH = 40
+_BOX_HEIGHT = len(_SETTING_FIELDS) + 3  # top/bottom border + one blank padding row above it
+_BOX_BOTTOM_MARGIN = 2  # leaves the box's bottom border one row up from the screen's last row
+_VALUE_FIELD_WIDTH = 20
+_VALUE_INNER_WIDTH = _VALUE_FIELD_WIDTH - 4  # "⏴ " + " ⏵" chrome around the value text
 
 _DEMO_CONVERSATION = Conversation(
     address="+14085551234",
@@ -75,8 +85,34 @@ _DEMO_CONVERSATION = Conversation(
             datetime=datetime.today().strftime("%Y%m%dT094100") if datetime.today().hour >= 10 else (datetime.today() - timedelta(days=1)).strftime("%Y%m%dT094100"),
             text="Here's to the crazy ones. The misfits. The rebels. The troublemakers. The round pegs in the square holes. The ones who see things differently. They're not fond of rules. And they have no respect for the status quo. You can quote them, disagree with them, glorify or vilify them.\r\n\r\nAbout the only thing you can't do is ignore them."
         ),
+        Message(
+            handle="10",
+            folder="sent",
+            datetime=datetime.today().strftime("%Y%m%dT094100") if datetime.today().hour >= 10 else (datetime.today() - timedelta(days=1)).strftime("%Y%m%dT094100"),
+            text="Because they change things. They push the human race forward. And while some may see them as the crazy ones, we see genius. Because the people who are crazy enough to think they can change the world, are the ones who do."
+        ),
     ],
 )
+
+
+@dataclass
+class SettingRow:
+    key: str
+    label: str
+    options: list[str]
+
+
+def _build_setting_rows() -> list[SettingRow]:
+    return [SettingRow(key, label, config.CONFIG_VALUES[key].options) for key, label in _SETTING_FIELDS]
+
+
+def _shift_setting(row: SettingRow, delta: int) -> None:
+    """Moves `row`'s value one step toward the start/end of its options list and persists the
+    change to config's in-memory cache (writing to disk is wired up separately)."""
+    index = row.options.index(config.get(row.key))
+    new_index = min(max(index + delta, 0), len(row.options) - 1)
+    if new_index != index:
+        config.set(row.key, row.options[new_index])
 
 
 def _addstr_clipped(stdscr, y: int, x: int, text: str, attr: int = 0) -> None:
@@ -155,15 +191,21 @@ def _draw_box(stdscr, box_x, box_y, width, height, title: str | None = None) -> 
         _addstr_clipped(stdscr, box_y, (width // 2) - (len(title) // 2) + box_x, title, box_attr)
 
 
-def _draw_settings_box(stdscr) -> None:
+def _draw_settings_box(stdscr, rows: list[SettingRow], selected_row: int) -> None:
     max_y, max_x = stdscr.getmaxyx()
     box_x = (max_x - _BOX_WIDTH) // 2
     box_y = max_y - _BOX_BOTTOM_MARGIN - _BOX_HEIGHT
 
     _draw_box(stdscr, box_x, box_y, _BOX_WIDTH, _BOX_HEIGHT, "Settings")
 
-    for i, key in enumerate(config.CONFIG_VALUES.keys()):
-        _addstr_clipped(stdscr, box_y + 1 + i, box_x + 2, key, curses.color_pair(_PAIR_BOX))
+    value_x = box_x + _BOX_WIDTH - _VALUE_FIELD_WIDTH - 1
+    for i, row in enumerate(rows):
+        y = box_y + i + 1
+        _addstr_clipped(stdscr, y, box_x + 2, row.label, curses.color_pair(_PAIR_BOX))
+
+        value_attr = curses.color_pair(_PAIR_HIGHLIGHT if i == selected_row else _PAIR_BOX)
+        value_text = f"⏴ {config.get(row.key):<{_VALUE_INNER_WIDTH}} ⏵"
+        _addstr_clipped(stdscr, y, value_x, value_text, value_attr)
 
 
 def _wizard(stdscr) -> None:
@@ -174,6 +216,7 @@ def _wizard(stdscr) -> None:
     curses.init_pair(_PAIR_BOX, curses.COLOR_WHITE, curses.COLOR_BLUE)
     curses.init_pair(_PAIR_SHADOW, curses.COLOR_WHITE, 8)  # 8 == bright black, i.e. grey; no named curses constant for it
     curses.init_pair(_PAIR_BACKGROUND, -1, -1)
+    curses.init_pair(_PAIR_HIGHLIGHT, curses.COLOR_BLUE, curses.COLOR_WHITE)
     for n in range(8):
         curses.init_pair(_PAIR_FG_BASE + n, n, -1)
 
@@ -182,23 +225,29 @@ def _wizard(stdscr) -> None:
         for n in range(8):
             curses.init_pair(_PAIR_FG_BRIGHT_BASE + n, 8 + n, -1)
 
-    selected = 0
+    rows = _build_setting_rows()
+    selected_row = 0
+
     while True:
         stdscr.erase()
         _draw_background(stdscr)
-        _draw_settings_box(stdscr)
+        _draw_settings_box(stdscr, rows, selected_row)
         stdscr.refresh()
 
         key = stdscr.getch()
         if key == ord("q"):
             break
         elif key == curses.KEY_UP:
-            selected = (selected - 1) % len(_WIZARD_OPTIONS)
+            selected_row = (selected_row - 1) % len(rows)
         elif key == curses.KEY_DOWN:
-            selected = (selected + 1) % len(_WIZARD_OPTIONS)
+            selected_row = (selected_row + 1) % len(rows)
+        elif key == curses.KEY_LEFT:
+            _shift_setting(rows[selected_row], -1)
+        elif key == curses.KEY_RIGHT:
+            _shift_setting(rows[selected_row], 1)
 
 
-def run_onboarding_wizard(options: list | None = None) -> None:
+def run_onboarding_wizard() -> None:
     locale.setlocale(locale.LC_ALL, "")
     try:
         curses.wrapper(_wizard)

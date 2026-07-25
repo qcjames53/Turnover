@@ -27,13 +27,12 @@ CONFIG_VALUES: dict[str, Setting] = {
     ),
     "messages_displayed": Setting(
         default="8",
-        options=["8"]
+        options=["1", "2", "3", "4", "5", "6", "8", "10", "12", "15", "20", "25", "30", "35", "40", "45", "50", "60", "70", "80", "90", "100", "all"]
     ),
 }
 
 
 _cache: dict | None = None
-_resolved_clock_format: str | None = None
 
 
 def _config_path() -> Path:
@@ -91,18 +90,14 @@ def get(option: str):
 
     :param option: One of CONFIG_VALUES's setting names.
     :returns: The persisted value if the config file has one for `option`, otherwise the default.
-        "auto" datetime_format is resolved to a concrete value before being returned.
+        Values are returned as stored -- e.g. datetime_format's "auto" is returned literally,
+        not resolved to a concrete clock format (see cli.utils.resolve_datetime_format).
     """
     if option not in CONFIG_VALUES:
         raise KeyError(f"Unknown config option: {option!r}")
 
     settings = _read().get("settings", {})
-    value = settings.get(option, CONFIG_VALUES[option].default)
-
-    if value == "auto":
-        if option == "datetime_format":
-            return _resolve_clock_format()
-    return value
+    return settings.get(option, CONFIG_VALUES[option].default)
 
 
 def set(option: str, value) -> None:
@@ -119,49 +114,11 @@ def set(option: str, value) -> None:
     config.setdefault("settings", {})[option] = value
 
 
-def _resolve_clock_format() -> str:
-    """
-    Resolves "auto" datetime_format
-
-    :returns: "12h" or "24h".
-    """
-    global _resolved_clock_format
-    if _resolved_clock_format is not None:
-        return _resolved_clock_format
-
-    try:
-        import locale
-
-        from gi.repository import Gio
-
-        locale.setlocale(locale.LC_ALL, "")
-
-        schema_source = Gio.SettingsSchemaSource.get_default()
-        if schema_source is None or schema_source.lookup("org.gnome.desktop.interface", True) is None:
-            _resolved_clock_format = "12h"
-        else:
-            settings = Gio.Settings.new("org.gnome.desktop.interface")
-            _resolved_clock_format = "24h" if settings.get_string("clock-format") == "24h" else "12h"
-    except Exception:
-        _resolved_clock_format = "12h"
-
-    return _resolved_clock_format
-
-
-def warm() -> None:
-    """
-    Eagerly resolves every "auto"-valued setting (datetime_format), so later get() calls never pay
-    for a GNOME D-Bus round trip mid-render.
-    """
-    get("datetime_format")
-
-
 def clear() -> None:
     """
     Wipes all cached data: the config file, the in-memory config cache, and the synced-data db.
     """
-    global _cache, _resolved_clock_format
+    global _cache
     _config_path().unlink(missing_ok=True)
     _cache = None
-    _resolved_clock_format = None
     db.clear()

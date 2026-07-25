@@ -1,14 +1,14 @@
 """Runs once at the start of every command, before any db access.
 
 Applies pending schema migrations, a quick auto-sync (see config.py's
-"auto_sync" setting), and config's "auto"-valued setting resolution (see
-config.warm()) all in parallel -- a migration check is a handful of local
-sqlite reads, auto-sync is a real BT round trip, and warming config means
-a GNOME D-Bus round trip and a terminal ioctl, so none of the three should
-block command startup waiting on the others. In practice, auto-sync still
-waits on the migration result before touching the db itself (it needs the
-schema to exist to read known handles), so today the overlap only
-actually buys time during the BT round trip and config warm-up.
+"auto_sync" setting), and the clock-format cache warm-up (see
+cli.utils.warm()) all in parallel -- a migration check is a handful of local
+sqlite reads, auto-sync is a real BT round trip, and warming the clock
+format means a GNOME D-Bus round trip and a terminal ioctl, so none of the
+three should block command startup waiting on the others. In practice,
+auto-sync still waits on the migration result before touching the db itself
+(it needs the schema to exist to read known handles), so today the overlap
+only actually buys time during the BT round trip and the clock-format warm-up.
 """
 
 import concurrent.futures
@@ -60,9 +60,9 @@ def preflight() -> None:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             migration_job = pool.submit(db.migrate)
             quick_sync_job = pool.submit(_quick_sync, migration_job)
-            config_warm_job = pool.submit(config.warm)
+            clock_format_warm_job = pool.submit(utils.warm)
             migration_job.result()
-            config_warm_job.result()
+            clock_format_warm_job.result()
         synced_count = quick_sync_job.result()
 
     if synced_count:

@@ -10,6 +10,64 @@ ANSI_RESET = "\033[0m"
 _SPINNER_FRAMES = "|/-\\"
 _SPINNER_DELAY = 0.0667  # in seconds
 
+_resolved_clock_format: str | None = None
+
+
+def resolve_clock_format() -> str:
+    """
+    Resolves datetime_format's "auto" to a concrete clock format, from the desktop's preference
+    (GNOME's org.gnome.desktop.interface schema) if available. Memoized for the process, since
+    it's a real GNOME D-Bus round trip.
+
+    :returns: "12h" or "24h". Falls back to "12h" if no such preference can be read (e.g.
+        non-GNOME desktops, headless environments, or PyGObject not installed).
+    """
+    global _resolved_clock_format
+    if _resolved_clock_format is not None:
+        return _resolved_clock_format
+
+    try:
+        import locale
+
+        from gi.repository import Gio
+
+        locale.setlocale(locale.LC_ALL, "")
+
+        schema_source = Gio.SettingsSchemaSource.get_default()
+        if schema_source is None or schema_source.lookup("org.gnome.desktop.interface", True) is None:
+            _resolved_clock_format = "12h"
+        else:
+            settings = Gio.Settings.new("org.gnome.desktop.interface")
+            _resolved_clock_format = "24h" if settings.get_string("clock-format") == "24h" else "12h"
+    except Exception:
+        _resolved_clock_format = "12h"
+
+    return _resolved_clock_format
+
+
+def resolve_datetime_format(raw: str) -> str:
+    """
+    Resolves a possibly-"auto" datetime_format value to a concrete one, for rendering. Non-auto
+    values (including the "(reduced)" variants other than "auto (reduced)") pass through
+    unchanged.
+
+    :param raw: A datetime_format value as returned by config.get("datetime_format").
+    """
+    if raw == "auto":
+        return resolve_clock_format()
+    if raw == "auto (reduced)":
+        return f"{resolve_clock_format()} (reduced)"
+    return raw
+
+
+def warm() -> None:
+    """
+    Eagerly resolves the clock format, so later resolve_datetime_format() calls never pay for a
+    GNOME D-Bus round trip mid-render.
+    """
+    resolve_clock_format()
+
+
 def colorize(text: str, code: str) -> str:
     return f"{code}{text}{ANSI_RESET}" if sys.stdout.isatty() else text
 

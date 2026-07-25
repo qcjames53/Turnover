@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import re
 import textwrap
 from wcwidth import wcswidth
@@ -10,10 +10,12 @@ from . import utils
 _MIN_WIDTH_MONOGRAM_COL = 7
 _MIN_WIDTH_TIMESTAMP_COL = 7  # Not enforced if timestamp column goes unrendered
 _MIN_DATETIME_TERMINAL_WIDTH = 50
+_IRC_TIME_COL_WIDTH_12H = 8
+_IRC_TIME_COL_WIDTH_24H = 6
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD = 1201  # in seconds
-_COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD = 1201 # in seconds
+_COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD = 1201  # in seconds
 _CONTACT_MONOGRAM = "[{name}]"
 _USER_MONOGRAM = utils.colorize("[YOU]", utils.ANSI_CYAN)
 _BLOCK_INDICATOR_TOP = utils.colorize("╭ ", utils.ANSI_GREY)
@@ -50,89 +52,186 @@ def _monogram(name: str) -> str:
     return _CONTACT_MONOGRAM.format(name=initials_string)
 
 
-def _datetime(message_datetime: datetime, previous_message_datetime: datetime | None = None) -> str | None:
-    dt_format = config.get("datetime_format")
+def _datetime(message_datetime: datetime, previous_message_datetime: datetime | None = None) -> tuple[str, str] | None:
+    """
+    Full date + time string pair for the "dt on the right" layouts (compact/cosy). Returns None
+    when nothing should be rendered for this message: datetime_format is "off", or it's a
+    "(reduced)" format and this message landed close enough after the previous one to skip.
+    """
+    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
     dt_is_reduced = dt_format == "auto (reduced)" or dt_format == "12h (reduced)" or dt_format == "24h (reduced)"
 
     if dt_format == "off":
-        return
+        return None
 
     if previous_message_datetime and dt_is_reduced:
         dt_diff = message_datetime - previous_message_datetime
         if dt_diff.total_seconds() < _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD:
-            return
+            return None
 
     date_string = ""
     time_string = ""
     today = datetime.now().date()
 
-    if previous_message_datetime is None or message_datetime.date() != previous_message_datetime.date():
-        if dt_format == "rfc3339":
-            date_string = message_datetime.strftime("%Y-%m-%d ") 
-        elif message_datetime.date() == today:
+    if dt_format == "rfc3339":
+        date_string = message_datetime.strftime("%Y-%m-%d ")
+    elif previous_message_datetime is None or message_datetime.date() != previous_message_datetime.date():
+        if message_datetime.date() == today:
             date_string = "Today "
         elif message_datetime.date().year == today.year:
             date_string = message_datetime.strftime("%b %d ")
         else:
             date_string = message_datetime.strftime("%b %d %Y ")
-        
+
     if dt_format == "12h" or dt_format == "12h (reduced)":
         time_string = message_datetime.strftime("%-I:%M%p ").lower()  # %P doesn't seem to work?
     else:
         time_string = message_datetime.strftime("%H:%M ")
 
-    return utils.colorize(date_string + time_string, utils.ANSI_GREY)
+    return utils.colorize(date_string, utils.ANSI_GREY), utils.colorize(time_string, utils.ANSI_GREY)
 
 
-def get_conversation_string(conversations):
+def _irc_time(message_datetime: datetime, dt_format: str) -> str:
+    """
+    Clock-only timestamp for the irc layout: just H:M in 12h or 24h form, never a date. Callers
+    that want date breaks show them separately rather than inline per-message.
+    """
+    if dt_format.startswith("12h"):
+        return message_datetime.strftime("%-I:%M%p ").lower()
+    return message_datetime.strftime("%H:%M ")
+
+
+def _wrap_message(m, monogram: str, monogram_width: int, left_padding: int, remaining_space: int) -> list[str]:
+    """Wraps a message's text to `remaining_space` columns and prefixes the monogram / block-continuation indicators."""
+    lines = []
+    for paragraph in m.text.split("\n"):
+        lines.extend(textwrap.wrap(paragraph, width=remaining_space) or [""])
+
+    if len(lines) == 1:
+        lines[0] = monogram + " " * (left_padding - monogram_width) + lines[0]
+    else:
+        lines[0] = monogram + " " * (left_padding - monogram_width - _actual_width(_BLOCK_INDICATOR_TOP)) + _BLOCK_INDICATOR_TOP + lines[0]
+        lines[1:-1] = [" " * (left_padding - _actual_width(_BLOCK_INDICATOR_MID)) + _BLOCK_INDICATOR_MID + line for line in lines[1:-1]]
+        lines[-1] = " " * (left_padding - _actual_width(_BLOCK_INDICATOR_BTM)) + _BLOCK_INDICATOR_BTM + lines[-1]
+
+    return lines
+
+
+def _render_dt_right(conversations, *, blank_line_around_header: bool, gap_threshold: int | None) -> str:
+    """
+    Shared body for the compact and cosy layouts: monogram + text on the left, and (when it
+    fits) a date/time string right-aligned on each message's first line.
+    """
     terminal_width = utils.terminal_width()
-    is_cosy = config.get("layout") == "cosy"
-    is_rendering_dt = terminal_width > _MIN_DATETIME_TERMINAL_WIDTH
-    output: str = ""
-    for c in conversations:
-        contact_monogram: str = _monogram(c.contact_name)
+    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
+    is_rendering_dt = terminal_width > _MIN_DATETIME_TERMINAL_WIDTH and dt_format != "off"
 
-        if is_cosy: output += "\n"
+    output = ""
+    for c in conversations:
+        contact_monogram = _monogram(c.contact_name)
+
+        if blank_line_around_header:
+            output += "\n"
         output += _conversation_header(c.address, c.contact_name) + "\n"
-        if is_cosy: output += "\n"
+        if blank_line_around_header:
+            output += "\n"
 
         prev_dt: datetime | None = None
         for m in c.messages:
             is_outgoing = m.folder == "sent"
-            monogram = (_USER_MONOGRAM if is_outgoing else contact_monogram)
+            monogram = _USER_MONOGRAM if is_outgoing else contact_monogram
             monogram_width = _actual_width(monogram)
 
             dt = datetime.strptime(m.datetime, "%Y%m%dT%H%M%S")
-            dt_string = _datetime(dt, prev_dt) if is_rendering_dt else ""
-            dt_width = _actual_width(dt_string)
-            if is_cosy and  is_rendering_dt and prev_dt and (dt - prev_dt).total_seconds() > _COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD:
+            dt_pair = _datetime(dt, prev_dt) if is_rendering_dt else None
+            dt_string = "".join(dt_pair) if dt_pair else ""
+            dt_width = _actual_width(dt_string) if dt_string else 0
+
+            if gap_threshold and prev_dt and (dt - prev_dt).total_seconds() > gap_threshold:
                 output += "\n"
             prev_dt = dt
 
             left_padding = max(monogram_width + 2, _MIN_WIDTH_MONOGRAM_COL)
-            right_padding = max(dt_width + 2, _MIN_WIDTH_TIMESTAMP_COL) if is_rendering_dt else 2
+            right_padding = max(dt_width + 2, _MIN_WIDTH_TIMESTAMP_COL) if is_rendering_dt else 1
             remaining_space = terminal_width - left_padding - right_padding
 
-            lines = []
-            for paragraph in m.text.split("\n"):
-                lines.extend(textwrap.wrap(paragraph, width=remaining_space) or [""])
-            
-            if len(lines) == 1:
-                lines[0] = monogram + " " * (left_padding - monogram_width) + lines[0]
-            else:
-                lines[0] = monogram + " " * (left_padding - monogram_width - _actual_width(_BLOCK_INDICATOR_TOP)) + _BLOCK_INDICATOR_TOP + lines[0]
-                lines[1:-1] = [" " * (left_padding - _actual_width(_BLOCK_INDICATOR_MID)) + _BLOCK_INDICATOR_MID + line for line in lines[1:-1]]
-                lines[-1] = " " * (left_padding - _actual_width(_BLOCK_INDICATOR_BTM)) + _BLOCK_INDICATOR_BTM + lines[-1]
+            lines = _wrap_message(m, monogram, monogram_width, left_padding, remaining_space)
 
-            if is_rendering_dt and dt_string:
+            if dt_string:
                 gap = max(terminal_width - _actual_width(lines[0]) - dt_width, 0)
-                lines[0] += " " * gap + dt_string       
+                lines[0] += " " * gap + dt_string
 
             output += "\n".join(lines) + "\n"
 
     return output
 
 
+def _render_compact(conversations) -> str:
+    return _render_dt_right(conversations, blank_line_around_header=False, gap_threshold=None)
+
+
+def _render_cosy(conversations) -> str:
+    return _render_dt_right(
+        conversations,
+        blank_line_around_header=True,
+        gap_threshold=_COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD,
+    )
+
+
+def _render_irc(conversations) -> str:
+    """
+    IRC-style layout: a fixed-width clock column on the left (12h or 24h, per datetime_format),
+    monogram + text to its right. No date is rendered inline here -- show date breaks elsewhere
+    in the log if you want them.
+    """
+    terminal_width = utils.terminal_width()
+    dt_format = utils.resolve_datetime_format(config.get("datetime_format"))
+    is_rendering_dt = terminal_width > _MIN_DATETIME_TERMINAL_WIDTH and dt_format != "off"
+
+    time_col_width = 0
+    if is_rendering_dt:
+        time_col_width = _IRC_TIME_COL_WIDTH_12H if dt_format.startswith("12h") else _IRC_TIME_COL_WIDTH_24H
+
+    output = ""
+    for c in conversations:
+        contact_monogram = _monogram(c.contact_name)
+        output += _conversation_header(c.address, c.contact_name) + "\n"
+
+        for m in c.messages:
+            is_outgoing = m.folder == "sent"
+            monogram = _USER_MONOGRAM if is_outgoing else contact_monogram
+            monogram_width = _actual_width(monogram)
+
+            dt = datetime.strptime(m.datetime, "%Y%m%dT%H%M%S")
+            t_string = _irc_time(dt, dt_format) if is_rendering_dt else ""
+
+            left_padding = max(monogram_width + 2, _MIN_WIDTH_MONOGRAM_COL)
+            remaining_space = terminal_width - left_padding - 1 - time_col_width
+
+            lines = _wrap_message(m, monogram, monogram_width, left_padding, remaining_space)
+
+            if time_col_width:
+                lines[0] = t_string + " " * (time_col_width - _actual_width(t_string)) + lines[0]
+                lines[1:] = [" " * time_col_width + line for line in lines[1:]]
+
+            output += "\n".join(lines) + "\n"
+
+    return output
+
+
+_LAYOUT_RENDERERS = {
+    "irc": _render_irc,
+    "compact": _render_compact,
+    "cosy": _render_cosy,
+    # "bubbles" is a recognized config value (see config.CONFIG_VALUES) but has no renderer
+    # yet, so it falls through to the compact default below.
+}
+
+
+def get_conversation_string(conversations) -> str:
+    renderer = _LAYOUT_RENDERERS.get(config.get("layout"), _render_compact)
+    return renderer(conversations)
+
+
 def get_output_string(addresses: list[str]):
     pass
-    
