@@ -144,18 +144,44 @@ def list_contacts() -> list[Contact]:
     return contacts
 
 
-def find_contacts(query: str) -> list[Contact]:
+def _most_recently_messaged_handle(handles: list[str]) -> str | None:
     """
-    Fuzzy-resolves a contact name query against the cached address book. Case-insensitive
-    substring matches (e.g. "jo" -> "John", "Joanna") win outright over typo tolerance; only when
-    none of those hit do we fall back to difflib's closest-name matching, to survive e.g. "jonh".
+    Of `handles`, returns whichever contact has exchanged the most recent message across any of
+    their numbers, or None if none of them have any messages yet.
+    """
+    conn = _connect()
+    try:
+        placeholders = ", ".join("?" * len(handles))
+        row = conn.execute(
+            f"""
+            SELECT cn.contact_handle
+            FROM contact_numbers cn
+            JOIN messages m ON m.conversation_addressing = cn.number
+            WHERE cn.contact_handle IN ({placeholders})
+            ORDER BY m.datetime DESC
+            LIMIT 1
+            """,
+            handles,
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def find_contacts(query: str) -> Contact | None:
+    """
+    Fuzzy-resolves a contact name query to a single cached contact. Case-insensitive substring
+    matches (e.g. "jo" -> "John", "Joanna") win outright over typo tolerance; only when none of
+    those hit do we fall back to difflib's closest-name matching, to survive e.g. "jonh". When
+    more than one contact is still in the running after that, whichever has the most recent
+    message wins the tie (a contact with no messages yet always loses it).
 
     :param query: Full or partial contact name, as typed by a user (e.g. "quinn" or "quinn j").
-    :returns: Matching contacts, [] if nothing matches closely enough.
+    :returns: The best-matching contact, or None if nothing matches closely enough.
     """
     name = query.strip()
     if not name:
-        return []
+        return None
 
     conn = _connect()
     try:
@@ -165,17 +191,24 @@ def find_contacts(query: str) -> list[Contact]:
         ).fetchall()
     finally:
         conn.close()
+    handles = [handle for (handle,) in rows]
 
     all_contacts = list_contacts()
 
-    if rows:
-        matched_handles = [handle for (handle,) in rows]
-        contacts_by_handle = {c.handle: c for c in all_contacts}
-        return [contacts_by_handle[h] for h in matched_handles if h in contacts_by_handle]
+    if not handles:
+        contacts_by_lower_name = {c.name.lower(): c for c in all_contacts}
+        close_names = difflib.get_close_matches(name.lower(), contacts_by_lower_name.keys(), n=5, cutoff=0.6)
+        handles = [contacts_by_lower_name[n].handle for n in close_names]
 
-    contacts_by_lower_name = {c.name.lower(): c for c in all_contacts}
-    close_names = difflib.get_close_matches(name.lower(), contacts_by_lower_name.keys(), n=5, cutoff=0.6)
-    return [contacts_by_lower_name[n] for n in close_names]
+    if not handles:
+        return None
+
+    contacts_by_handle = {c.handle: c for c in all_contacts}
+    if len(handles) == 1:
+        return contacts_by_handle.get(handles[0])
+
+    best_handle = _most_recently_messaged_handle(handles) or handles[0]
+    return contacts_by_handle.get(best_handle)
 
 
 def _escape_like(text: str) -> str:
@@ -241,6 +274,28 @@ def save_messages(messages: list[Message]) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def list_unread_addresses() -> list[str]:
+    """
+    Lists conversation addresses (see list_conversations' conversation_addressing grouping) with
+    at least one locally-unread message, ordered by that conversation's most recent unread
+    message, oldest first.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT conversation_addressing
+            FROM messages
+            WHERE local_read = 0
+            GROUP BY conversation_addressing
+            ORDER BY MAX(datetime) ASC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return [address for (address,) in rows]
 
 
 def mark_read(handles: list[tuple[str, str]]) -> None:

@@ -3,7 +3,7 @@ import re
 import textwrap
 from wcwidth import wcswidth
 
-from .. import config, db, pbap
+from .. import config, pbap
 from . import utils
 
 # Padding constants
@@ -29,7 +29,7 @@ def _actual_width(text: str) -> int:
 
 def _conversation_header(number: str, name: str | None = None):
     formatted_number = pbap.format_phone_display(number)
-    center_text = f"  {name} ({formatted_number})  "
+    center_text = f"  {name} ({formatted_number})  " if name else f"  {formatted_number}  "
     padded = center_text.center(utils.terminal_width(), "-")
     left_dashes, _, right_dashes = padded.partition(center_text)
     return (
@@ -138,7 +138,7 @@ def _render_dt_right(conversations, *, blank_line_around_header: bool, gap_thres
 
     output = ""
     for c in conversations:
-        contact_monogram = _monogram(c.contact_name)
+        contact_monogram = _monogram(c.contact_name or pbap.format_phone_display(c.address))
 
         if blank_line_around_header:
             output += "\n"
@@ -204,7 +204,7 @@ def _render_irc(conversations) -> str:
 
     output = ""
     for c in conversations:
-        contact_monogram = _monogram(c.contact_name)
+        contact_monogram = _monogram(c.contact_name or pbap.format_phone_display(c.address))
         output += _conversation_header(c.address, c.contact_name) + "\n"
 
         previous_message_datetime: datetime | None = None
@@ -249,19 +249,3 @@ _LAYOUT_RENDERERS = {
 def get_conversation_string(conversations) -> str:
     renderer = _LAYOUT_RENDERERS.get(config.get("layout"), _render_compact)
     return renderer(conversations)
-
-
-def get_output_string(addresses: list[str]) -> str:
-    """
-    Renders the given conversations, each capped to config's messages_displayed most recent
-    messages -- the cap and time-ascending ordering both happen in the db query, so every layout
-    renders whatever window it's handed as-is.
-
-    :param addresses: Addresses to include; see db.list_conversations.
-    """
-    m_count = config.get("messages_displayed")
-    if m_count == "all":
-        m_count = None
-
-    conversations = db.list_conversations(addresses, messages_per_conversation=m_count)
-    return get_conversation_string(conversations)
