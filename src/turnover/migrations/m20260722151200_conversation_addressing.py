@@ -1,11 +1,4 @@
-"""Adds a generated conversation_addressing column to messages, so conversations can be grouped
-directly in SQL instead of in Python: recipient_addressing for sent messages, sender_addressing
-otherwise -- mirrors db.py's list_conversations.
-
-VIRTUAL rather than STORED: SQLite can't ADD a STORED generated column to a non-empty table (it
-would need to backfill it), only an empty one. VIRTUAL computes on read instead of on write, which
-is irrelevant at this cache's size and still supports the index below.
-"""
+"""Adds a generated conversation_addressing column to messages, so conversations can be grouped"""
 
 import sqlite3
 

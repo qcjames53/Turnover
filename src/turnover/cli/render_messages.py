@@ -8,7 +8,7 @@ from . import utils
 
 # Padding constants
 _MIN_WIDTH_MONOGRAM_COL = 7
-_MIN_WIDTH_TIMESTAMP_COL = 7  # Not enforced if timestamp column goes unrendered
+_MIN_WIDTH_TIMESTAMP_COL = 1  # Not enforced if timestamp column goes unrendered
 _MIN_DATETIME_TERMINAL_WIDTH = 50
 _IRC_TIME_COL_WIDTH_12H = 8
 _IRC_TIME_COL_WIDTH_24H = 6

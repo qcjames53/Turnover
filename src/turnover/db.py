@@ -298,6 +298,25 @@ def list_unread_addresses() -> list[str]:
     return [address for (address,) in rows]
 
 
+def has_conversation(address: str) -> bool:
+    """
+    True if `address` (see conversation_addressing) has at least one cached message, i.e. it's a
+    real conversation whether or not it belongs to a saved contact -- e.g. an SMS short code or a
+    number that texted in without ever being saved.
+
+    :param address: Exact conversation_addressing value to look up (e.g. already-canonicalized
+        via pbap.canonicalize_number).
+    """
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM messages WHERE conversation_addressing = ? LIMIT 1", (address,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return row is not None
+
+
 def mark_read(handles: list[tuple[str, str]]) -> None:
     """
     Marks the given (folder, handle) messages as locally read -- called after a conversation is
@@ -354,16 +373,24 @@ def list_conversations(
     SQL -- Python just does one linear pass reshaping the already-ordered flat rows into
     Conversation/Message objects.
 
+    When capped, the window is anchored on each conversation's oldest locally-unread message
+    (falling back to its newest message if nothing is unread) rather than on "now": messages at or
+    before that anchor are capped to the N most recent among them, while everything strictly newer
+    than the anchor -- every later unread message and anything since -- is always included
+    uncapped. That guarantees enough older context to lead into a pile of unread messages without
+    ever truncating away part of that pile.
+
     :param addresses: Addresses to include; omit (None) for every conversation in the cache. An
         empty list matches no addresses, returning [].
-    :param messages_per_conversation: Caps each conversation to its N most recent messages (still
-        oldest-first within that window); omit (None) for full history. 0 drops every conversation
-        from the result, since none would have any messages left to show.
+    :param messages_per_conversation: Caps the at-or-before-anchor portion of each conversation to
+        its N most recent messages (still oldest-first within that window); omit (None) for full
+        history. 0 drops every conversation from the result, since none would have any messages
+        left to show.
     :returns: Conversations ordered by their newest message's datetime, ascending.
         `contact_name` is None if the address doesn't match a synced contact.
     """
     columns = ", ".join(_MESSAGE_COLUMNS)
-    scoped_columns = ", ".join(f"s.{c}" for c in (*_MESSAGE_COLUMNS, "local_read", "conversation_addressing"))
+    ranked_columns = ", ".join(f"r.{c}" for c in (*_MESSAGE_COLUMNS, "local_read", "conversation_addressing"))
     params: list = []
 
     scope_clause = ""
@@ -374,23 +401,38 @@ def list_conversations(
 
     cap_clause = ""
     if messages_per_conversation is not None:
-        cap_clause = "WHERE s.recency_rank <= ?"
+        cap_clause = "WHERE r.is_after_anchor OR r.recency_rank <= ?"
         params.append(messages_per_conversation)
 
     query = f"""
         WITH scoped AS (
-            SELECT {columns}, local_read, conversation_addressing,
-                   ROW_NUMBER() OVER (PARTITION BY conversation_addressing ORDER BY datetime DESC) AS recency_rank,
-                   MAX(datetime) OVER (PARTITION BY conversation_addressing) AS conversation_last_datetime
+            SELECT {columns}, local_read, conversation_addressing
             FROM messages
             {scope_clause}
+        ),
+        anchors AS (
+            SELECT conversation_addressing,
+                   COALESCE(MIN(CASE WHEN local_read = 0 THEN datetime END), MAX(datetime)) AS anchor_datetime,
+                   MAX(datetime) AS conversation_last_datetime
+            FROM scoped
+            GROUP BY conversation_addressing
+        ),
+        ranked AS (
+            SELECT s.*, a.conversation_last_datetime,
+                   s.datetime > a.anchor_datetime AS is_after_anchor,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY s.conversation_addressing, s.datetime > a.anchor_datetime
+                       ORDER BY s.datetime DESC
+                   ) AS recency_rank
+            FROM scoped s
+            JOIN anchors a ON a.conversation_addressing = s.conversation_addressing
         )
-        SELECT {scoped_columns}, c.name
-        FROM scoped s
-        LEFT JOIN contact_numbers cn ON cn.number = s.conversation_addressing
+        SELECT {ranked_columns}, c.name
+        FROM ranked r
+        LEFT JOIN contact_numbers cn ON cn.number = r.conversation_addressing
         LEFT JOIN contacts c ON c.handle = cn.contact_handle
         {cap_clause}
-        ORDER BY s.conversation_last_datetime ASC, s.datetime ASC
+        ORDER BY r.conversation_last_datetime ASC, r.datetime ASC
     """
     conn = _connect()
     try:

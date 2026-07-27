@@ -1,33 +1,19 @@
 import argparse
 import sys
+import uuid
+from datetime import datetime
 
 import argcomplete
 
 from .. import __version__, config, db, pbap, preflight, sdp
 from .. import map as map_
+from .._vendor.nobex.common import OBEXError
 from . import onboarding, render_messages, utils
 
 _SUBCOMMANDS = ("contacts", "messages", "setup", "status", "sync")
 
-
-def _complete_contact(prefix: str, **kwargs) -> list[str]:
-    """
-    Argcomplete completer for messages' `contacts` positional. Completes only the single contact
-    name after the last comma, substring-matched (deliberately not db.find_contacts -- that
-    resolves to the one best contact, but completion wants to show every candidate while the user
-    is still typing), leaving any already-typed "name1,name2," prefix in front of each suggestion
-    untouched.
-    """
-    prior, _, current = prefix.rpartition(",")
-    try:
-        contacts = db.list_contacts()
-    except Exception:
-        # Completion runs ahead of preflight's migration -- e.g. no db file yet on a first run.
-        return []
-    if current:
-        query = current.lower()
-        contacts = [c for c in contacts if query in c.name.lower()]
-    return [f"{prior},{c.name}" if prior else c.name for c in contacts]
+# Transient Bluetooth link trouble while sending shouldn't look like a crash.
+_LINK_ERRORS = (OSError, OBEXError)
 
 
 def _normalize_argv(argv: list[str]) -> list[str]:
@@ -51,13 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("contacts", help="List all synced contacts")
     messages_parser = subparsers.add_parser("messages", help="Show and send messages")
-    contacts_arg = messages_parser.add_argument(
+    messages_parser.add_argument(
         "contacts",
         nargs="?",
         metavar="address(es)",
         help='(Optional) Comma-separated address list (e.g. "mom, 408-555-1234")',
     )
-    contacts_arg.completer = _complete_contact
     messages_parser.add_argument(
         "message", nargs="?", help="(Optional) Message to send to selected address"
     )
@@ -75,8 +60,12 @@ def _resolve_addresses(contacts_arg: str) -> list[str]:
     first-seen order. Each name resolves to at most one contact (see db.find_contacts -- an
     ambiguous name is settled by picking whoever has the most recent message), so "foo,bar" can
     still surface two contacts' worth of addresses, one per name, but a single name never does.
-    A name that doesn't match any cached contact is skipped (with a warning to stderr) rather
-    than aborting the whole lookup.
+    Failing that, a name is tried as a direct address instead -- canonicalized the same way synced
+    addressing is (see pbap.canonicalize_number, which passes short codes and similar through
+    unchanged) -- and used as-is if that's an exact match for an existing conversation, even one
+    with no saved contact behind it (e.g. a texted-in short code). A name that doesn't match any
+    cached contact or existing conversation is skipped (with a warning to stderr) rather than
+    aborting the whole lookup.
 
     :param contacts_arg: Raw "contact1,contact2" argument, as passed on the command line.
     """
@@ -88,11 +77,16 @@ def _resolve_addresses(contacts_arg: str) -> list[str]:
             continue
 
         contact = db.find_contacts(name)
-        if contact is None:
-            print(f"turnover: no contact found matching {name!r}", file=sys.stderr)
-            continue
+        if contact is not None:
+            numbers = contact.numbers
+        else:
+            candidate = pbap.canonicalize_number(name)
+            if not db.has_conversation(candidate):
+                print(f"turnover: no contact found matching {name!r}", file=sys.stderr)
+                continue
+            numbers = [candidate]
 
-        for number in contact.numbers:
+        for number in numbers:
             if number not in seen:
                 seen.add(number)
                 addresses.append(number)
@@ -107,8 +101,7 @@ def _show_conversations(addresses: list[str]) -> None:
     contract that this only happens once a conversation has actually been shown to the user.
     """
     m_count = config.get("messages_displayed")
-    if m_count == "all":
-        m_count = None
+    m_count = None if m_count == "all" else int(m_count)
 
     conversations = db.list_conversations(addresses, messages_per_conversation=m_count)
     print(render_messages.get_conversation_string(conversations))
@@ -156,7 +149,31 @@ def _run_messages(contacts_arg: str | None, message: str | None) -> None:
         print("turnover: no phone linked -- run `turnover setup`", file=sys.stderr)
         return
 
-    map_.send_message(device["address"], device["mas_channel"], addresses[0], message)
+    try:
+        map_.send_message(device["address"], device["mas_channel"], addresses[0], message)
+    except _LINK_ERRORS as e:
+        print(f"turnover: send failed ({e}) -- bluetooth link trouble, try again", file=sys.stderr)
+        return
+
+    # iPhones' MAP "sent" folder often never reflects a PushMessage back (or not right away) --
+    # cache it locally under a synthetic handle so it shows up right away. A later sync may add a
+    # second row for the same message if the phone does eventually surface it with its own handle;
+    # there's no reliable way to de-dupe those without a real handle back from PushMessage.
+    local_handle = f"local-{uuid.uuid4().hex}"
+    db.save_messages(
+        [
+            db.Message(
+                handle=local_handle,
+                folder="sent",
+                datetime=datetime.now().strftime("%Y%m%dT%H%M%S"),
+                sender_addressing="",
+                recipient_addressing=addresses[0],
+                text=message,
+            )
+        ]
+    )
+    # save_messages always inserts new rows unread -- you've obviously "read" what you just sent.
+    db.mark_read([("sent", local_handle)])
 
 
 def _run_status() -> None:

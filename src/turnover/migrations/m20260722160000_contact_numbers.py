@@ -1,6 +1,4 @@
-"""Splits contacts.number into its own contact_numbers table -- a contact can carry more than one
-number (mobile/home/work), which a single NOT NULL column can't represent.
-"""
+"""Splits contacts.number into its own contact_numbers table"""
 
 import sqlite3
 
