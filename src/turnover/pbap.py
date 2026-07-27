@@ -23,8 +23,7 @@ class Contact:
 
 def _extract_tels(vcard_text: str) -> list[str]:
     """
-    Extracts the contact's phone number(s) from a vcard -- a contact can carry more than one TEL
-    line (mobile, home, work, ...).
+    Extracts the contact's phone number(s) from a vcard
 
     :param vcard_text: Body contents of the vcard (string)
     :returns: Contents of each TEL line as reported by the phone, in vcard order.

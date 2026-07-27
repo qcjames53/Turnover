@@ -216,8 +216,9 @@ def _wizard(stdscr) -> None:
         elif key in (curses.KEY_ENTER, ord("\n"), ord("\r")) and selected_row == len(rows):
             if device_row.devices:
                 address = device_row.devices[device_row.index].address
-                channel = sdp.find_rfcomm_channel(address, sdp.MESSAGE_ACCESS_SERVICE_CLASS)
-                config.set_linked_device(address, channel)
+                mas_channel = sdp.find_rfcomm_channel(address, sdp.MESSAGE_ACCESS_SERVICE_CLASS)
+                pbap_channel = sdp.find_rfcomm_channel(address, sdp.PHONEBOOK_ACCESS_SERVICE_CLASS)
+                config.set_linked_device(address, mas_channel, pbap_channel)
             config.write()
             break
 

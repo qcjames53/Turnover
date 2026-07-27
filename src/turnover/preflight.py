@@ -1,19 +1,6 @@
-"""Runs once at the start of every command, before any db access.
-
-Applies pending schema migrations, a quick auto-sync (see config.py's
-"auto_sync" setting), and the clock-format cache warm-up (see
-cli.utils.warm()) all in parallel -- a migration check is a handful of local
-sqlite reads, auto-sync is a real BT round trip, and warming the clock
-format means a GNOME D-Bus round trip and a terminal ioctl, so none of the
-three should block command startup waiting on the others. In practice,
-auto-sync still waits on the migration result before touching the db itself
-(it needs the schema to exist to read known handles), so today the overlap
-only actually buys time during the BT round trip and the clock-format warm-up.
-"""
-
 import concurrent.futures
 
-from . import config, db
+from . import config, db, pbap
 from . import map as map_
 from ._vendor.nobex.common import OBEXError
 from .cli import utils
@@ -23,36 +10,43 @@ from .cli import utils
 _LINK_ERRORS = (OSError, OBEXError)
 
 
-def _quick_sync(migration_job: concurrent.futures.Future) -> int:
+def _quick_sync(migration_job: concurrent.futures.Future) -> tuple[int,int]:
     """
-    Silently syncs messages before a command runs, per the auto_sync setting. A link error is
-    swallowed -- a background sync failing shouldn't block the command the user actually asked
-    for.
+    Silently syncs messages/contacts before a command runs, per the auto_sync setting.
 
     :param migration_job: Future for the concurrently-running migration -- waited on before any
         db access, since this needs the schema to already exist.
-    :returns: Number of messages synced.
+    :returns: Number of messages synced and number of contacts synced.
     """
     auto_sync = config.get("auto_sync")
     if auto_sync == "off":
-        return 0
+        return 0, 0
 
     device = config.get_linked_device()
     if device is None:
-        return 0
+        return 0, 0
 
-    full = auto_sync == "full"
+    messages_synced = 0
+    contacts_synced = 0
 
     try:
-        migration_job.result()
+        migration_job.result()  # wait for migration to finish
 
-        message_handles = set() if full else db.known_message_handles()
-        messages = map_.sync_messages(device["address"], device["mas_channel"], known_handles=message_handles)
+        messages = map_.sync_messages(device["address"], device["mas_channel"], known_handles=db.known_message_handles())
         db.save_messages(messages)
+        messages_synced = len(messages)
 
-        return len(messages)
+        if auto_sync == "msgs+new contacts":
+            contacts = pbap.sync_contacts(device["address"], device["pbap_channel"], known_handles=db.known_contact_handles())
+            db.save_contacts(contacts)
+            contacts_synced = len(contacts)
+        elif auto_sync == "msgs+all contacts":
+            contacts = pbap.sync_contacts(device["address"], device["pbap_channel"], known_handles=None)
+            db.save_contacts(contacts)
+            contacts_synced = len(contacts)
     except _LINK_ERRORS:
-        return 0
+        return 0, 0
+    return messages_synced, contacts_synced
 
 
 def preflight() -> None:
@@ -63,7 +57,9 @@ def preflight() -> None:
             clock_format_warm_job = pool.submit(utils.resolve_datetime_format)
             migration_job.result()
             clock_format_warm_job.result()
-        synced_count = quick_sync_job.result()
+        messages_synced, contacts_synced = quick_sync_job.result()
 
-    if synced_count:
-        print(f"Synced {synced_count} messages")
+    if messages_synced:
+        print(f"Synced {messages_synced} messages")
+    if contacts_synced:
+        print(f"Synced {contacts_synced} contacts")

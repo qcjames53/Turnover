@@ -3,14 +3,14 @@ import sys
 import uuid
 from datetime import datetime
 
-import argcomplete
+import shtab
 
 from .. import __version__, config, db, pbap, preflight, sdp
 from .. import map as map_
 from .._vendor.nobex.common import OBEXError
 from . import onboarding, render_messages, utils
 
-_SUBCOMMANDS = ("contacts", "messages", "setup", "status", "sync")
+_SUBCOMMANDS = ("contacts", "messages", "reset", "setup", "status", "sync")
 
 # Transient Bluetooth link trouble while sending shouldn't look like a crash.
 _LINK_ERRORS = (OSError, OBEXError)
@@ -32,6 +32,7 @@ def _normalize_argv(argv: list[str]) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="turnover")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    shtab.add_argument_to(parser, "--print-completion", help="Print a shell tab-completion script")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -47,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
         "message", nargs="?", help="(Optional) Message to send to selected address"
     )
 
+    subparsers.add_parser("reset", help="Unlink you phone and wipe all data")
     subparsers.add_parser("setup", help="Run the setup wizard to link a phone")
     subparsers.add_parser("status", help="Show which conversations have unread messages")
     subparsers.add_parser("sync", help="Run a full sync of messages and contacts")
@@ -155,10 +157,6 @@ def _run_messages(contacts_arg: str | None, message: str | None) -> None:
         print(f"turnover: send failed ({e}) -- bluetooth link trouble, try again", file=sys.stderr)
         return
 
-    # iPhones' MAP "sent" folder often never reflects a PushMessage back (or not right away) --
-    # cache it locally under a synthetic handle so it shows up right away. A later sync may add a
-    # second row for the same message if the phone does eventually surface it with its own handle;
-    # there's no reliable way to de-dupe those without a real handle back from PushMessage.
     local_handle = f"local-{uuid.uuid4().hex}"
     db.save_messages(
         [
@@ -172,7 +170,7 @@ def _run_messages(contacts_arg: str | None, message: str | None) -> None:
             )
         ]
     )
-    # save_messages always inserts new rows unread -- you've obviously "read" what you just sent.
+    # save_messages always inserts new rows unread - you've obviously "read" what you just sent.
     db.mark_read([("sent", local_handle)])
 
 
@@ -186,6 +184,15 @@ def _run_status() -> None:
         label = conversation.contact_name or pbap.format_phone_display(conversation.address)
         unread = sum(1 for m in conversation.messages if not m.local_read)
         print(f"{label}: {unread} unread")
+
+
+def _run_reset() -> None:
+    answer = input("This will unlink your phone and delete all synced messages/contacts. This data will be unrecoverable. Continue? [y/N] ")
+    if answer.strip().lower() != "y":
+        print("Reset cancelled")
+        return
+    config.clear()
+    print("Reset complete")
 
 
 def _run_sync() -> None:
@@ -211,8 +218,11 @@ def main(argv: list[str] | None = None) -> None:
         argv = sys.argv[1:]
 
     parser = build_parser()
-    argcomplete.autocomplete(parser)
     args = parser.parse_args(_normalize_argv(argv))
+
+    if args.command == "reset":
+        _run_reset()
+        return
 
     preflight.preflight()
 

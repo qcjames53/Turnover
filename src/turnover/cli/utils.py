@@ -3,10 +3,9 @@ import shutil
 import sys
 import threading
 import locale
-from gi.repository import Gio
 import functools
 
-from .. import config
+from .. import _fake_device, config
 
 ANSI_GREY = "\033[90m"
 ANSI_CYAN = "\033[96m"
@@ -17,7 +16,18 @@ _SPINNER_DELAY = 0.0667  # in seconds
 
 @functools.cache
 def _resolve_system_clock() -> str:
+    # Fake-device mode should be deterministic regardless of the host's real GNOME settings
+    # (or lack thereof) -- don't let a dev box that happens to have gi/GNOME installed leak
+    # its real clock preference into a simulated run.
+    if _fake_device.enabled():
+        return "12h"
+
+    # Imported here rather than at module level so this module -- and anything that merely
+    # imports it without calling _resolve_system_clock() -- doesn't require PyGObject to be
+    # installed (e.g. running with TURNOVER_FAKE_DEVICE=1 on a non-Linux box).
     try:
+        from gi.repository import Gio
+
         locale.setlocale(locale.LC_ALL, "")
 
         schema_source = Gio.SettingsSchemaSource.get_default()

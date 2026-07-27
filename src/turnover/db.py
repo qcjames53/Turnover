@@ -72,8 +72,7 @@ def migrate() -> None:
 
 def known_contact_handles() -> set[str]:
     """
-    Lists contact handles already cached -- cheap enough (no vcard-fetched number) to call before
-    every incremental sync without pulling in the full contact rows via list_contacts().
+    Lists contact handles already cached
 
     :returns: Set of cached contact handles.
     """
@@ -87,8 +86,7 @@ def known_contact_handles() -> set[str]:
 
 def save_contacts(contacts: list[Contact]) -> None:
     """
-    Upserts `contacts` into the cache, keyed on handle, replacing each contact's numbers with
-    `Contact.numbers` (a contact can carry more than one, e.g. mobile/home/work).
+    Upserts `contacts` keyed on handle
 
     :param contacts: Contacts to upsert; a no-op if empty.
     """
@@ -118,7 +116,7 @@ def save_contacts(contacts: list[Contact]) -> None:
 
 def list_contacts() -> list[Contact]:
     """
-    Lists all cached contacts, sorted by name.
+    Lists all contacts, sorted by name.
 
     :returns: List of Contact objects; `numbers` is [] for a contact with none cached.
     """
@@ -146,8 +144,8 @@ def list_contacts() -> list[Contact]:
 
 def _most_recently_messaged_handle(handles: list[str]) -> str | None:
     """
-    Of `handles`, returns whichever contact has exchanged the most recent message across any of
-    their numbers, or None if none of them have any messages yet.
+    :param handles: contact handles to query
+    :returns: contact which exchanged the most recent message
     """
     conn = _connect()
     try:
@@ -170,11 +168,7 @@ def _most_recently_messaged_handle(handles: list[str]) -> str | None:
 
 def find_contacts(query: str) -> Contact | None:
     """
-    Fuzzy-resolves a contact name query to a single cached contact. Case-insensitive substring
-    matches (e.g. "jo" -> "John", "Joanna") win outright over typo tolerance; only when none of
-    those hit do we fall back to difflib's closest-name matching, to survive e.g. "jonh". When
-    more than one contact is still in the running after that, whichever has the most recent
-    message wins the tie (a contact with no messages yet always loses it).
+    Fuzzy-resolves a contact name query to a single contact.
 
     :param query: Full or partial contact name, as typed by a user (e.g. "quinn" or "quinn j").
     :returns: The best-matching contact, or None if nothing matches closely enough.
@@ -219,9 +213,6 @@ def _escape_like(text: str) -> str:
 def known_message_handles() -> set[tuple[str, str]]:
     """
     Lists (folder, handle) pairs among the _MESSAGE_HANDLES_NEEDED most recently cached messages
-    -- MAP's msg-listing only ever surfaces a phone's most recent messages anyway, so checking
-    further back just costs processing on every incremental sync for handles that could never
-    come back around.
 
     :returns: Set of cached (folder, handle) pairs.
     """
@@ -237,14 +228,8 @@ def known_message_handles() -> set[tuple[str, str]]:
 
 
 def save_messages(messages: list[Message]) -> None:
-    """Upserts `messages` into the cache, keyed on (folder, handle).
-
-    A brand-new (folder, handle) is inserted with local_read=0 (unread).
-    An already-cached one (only possible via `messages sync --full`, since
-    incremental sync never returns already-known handles at all) has its
-    protocol data refreshed but local_read deliberately left alone --
-    otherwise a --full resync would silently mark your already-read inbox
-    unread again, which isn't what "full" is for.
+    """
+    Upserts `messages`, keyed on (folder, handle).
 
     :param messages: Messages to upsert.
     """
@@ -278,9 +263,8 @@ def save_messages(messages: list[Message]) -> None:
 
 def list_unread_addresses() -> list[str]:
     """
-    Lists conversation addresses (see list_conversations' conversation_addressing grouping) with
-    at least one locally-unread message, ordered by that conversation's most recent unread
-    message, oldest first.
+    Lists conversation addresses with at least one locally-unread message, ordered by that conversation's most recent
+    unread message, oldest first.
     """
     conn = _connect()
     try:
@@ -300,12 +284,8 @@ def list_unread_addresses() -> list[str]:
 
 def has_conversation(address: str) -> bool:
     """
-    True if `address` (see conversation_addressing) has at least one cached message, i.e. it's a
-    real conversation whether or not it belongs to a saved contact -- e.g. an SMS short code or a
-    number that texted in without ever being saved.
-
-    :param address: Exact conversation_addressing value to look up (e.g. already-canonicalized
-        via pbap.canonicalize_number).
+    :param address: Exact conversation_addressing value to query
+    :returns: True if `address` has at least one message, False otherwise
     """
     conn = _connect()
     try:
@@ -319,8 +299,7 @@ def has_conversation(address: str) -> bool:
 
 def mark_read(handles: list[tuple[str, str]]) -> None:
     """
-    Marks the given (folder, handle) messages as locally read -- called after a conversation is
-    actually displayed to the user.
+    Marks the given (folder, handle) messages as locally read
 
     :param handles: (folder, handle) pairs to mark read; a no-op if empty.
     """
@@ -347,45 +326,14 @@ def _message_from_row(row: Sequence) -> Message:
     )
 
 
-def list_messages() -> list[Message]:
-    """
-    Lists all cached messages, ordered by datetime.
-
-    :returns: List of Message objects.
-    """
-    columns = ", ".join(_MESSAGE_COLUMNS)
-    conn = _connect()
-    try:
-        rows = conn.execute(f"SELECT {columns}, local_read FROM messages ORDER BY datetime").fetchall()
-    finally:
-        conn.close()
-    return [_message_from_row(row) for row in rows]
-
-
 def list_conversations(
     addresses: list[str] | None = None, messages_per_conversation: int | None = None
 ) -> list[Conversation]:
     """
-    Lists conversations, grouped by the messages.conversation_addressing generated column
-    (recipient_addressing for sent messages, sender_addressing otherwise). Conversations are
-    ordered oldest-newest-message first; each conversation's own messages are oldest-first.
-    Grouping, both orderings, the per-conversation cap, and the contact-name lookup all happen in
-    SQL -- Python just does one linear pass reshaping the already-ordered flat rows into
-    Conversation/Message objects.
+    Lists conversations grouped by address, ordered oldest-newest-message first
 
-    When capped, the window is anchored on each conversation's oldest locally-unread message
-    (falling back to its newest message if nothing is unread) rather than on "now": messages at or
-    before that anchor are capped to the N most recent among them, while everything strictly newer
-    than the anchor -- every later unread message and anything since -- is always included
-    uncapped. That guarantees enough older context to lead into a pile of unread messages without
-    ever truncating away part of that pile.
-
-    :param addresses: Addresses to include; omit (None) for every conversation in the cache. An
-        empty list matches no addresses, returning [].
-    :param messages_per_conversation: Caps the at-or-before-anchor portion of each conversation to
-        its N most recent messages (still oldest-first within that window); omit (None) for full
-        history. 0 drops every conversation from the result, since none would have any messages
-        left to show.
+    :param addresses: Addresses to list; omit (None) for every conversation.
+    :param messages_per_conversation: Display this many historical messages past the oldest unread message
     :returns: Conversations ordered by their newest message's datetime, ascending.
         `contact_name` is None if the address doesn't match a synced contact.
     """
@@ -450,6 +398,6 @@ def list_conversations(
 
 def clear() -> None:
     """
-    Deletes the local sqlite cache file, if it exists.
+    Deletes the local sqlite database, if it exists.
     """
     _db_path().unlink(missing_ok=True)

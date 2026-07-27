@@ -20,9 +20,7 @@ class PairedDevice:
 
 
 def _get_managed_objects() -> dict:
-    # Imported here rather than at module level so this module -- and anything that
-    # merely imports it without calling paired_devices() -- doesn't require PyGObject
-    # to be installed (e.g. running with TURNOVER_FAKE_DEVICE=1 on a non-Linux box).
+    # Imported here for broad _fake_device compatibility on systems which don't support Gio
     from gi.repository import Gio, GLib
 
     connection = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)

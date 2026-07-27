@@ -14,8 +14,8 @@ class Setting:
 
 CONFIG_VALUES: dict[str, Setting] = {
     "auto_sync": Setting(
-        default="incremental",
-        options=["off", "incremental", "full"]
+        default="msgs+new contacts",
+        options=["off", "messages", "msgs+new contacts", "msgs+all contacts"]
     ),
     "datetime_format": Setting(
         default="auto",
@@ -116,18 +116,18 @@ def set(option: str, value) -> None:
 
 def get_linked_device() -> dict | None:
     """
-    Returns the persisted linked-device dict ({"address", "mas_channel"}), or None if no device
-    has been linked yet.
+    Returns the persisted linked-device dict ({"address", "mas_channel", "pbap_channel"}), or None
+    if no device has been linked yet.
     """
     return _read().get("device")
 
 
-def set_linked_device(address: str, mas_channel: int) -> None:
+def set_linked_device(address: str, mas_channel: int, pbap_channel: int) -> None:
     """
     Sets the linked device in the in-memory cache used by get_linked_device() (writing to disk is
     wired up separately, via write()).
     """
-    _read()["device"] = {"address": address, "mas_channel": mas_channel}
+    _read()["device"] = {"address": address, "mas_channel": mas_channel, "pbap_channel": pbap_channel}
 
 
 def clear() -> None:
