@@ -2,6 +2,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from . import db
 
@@ -90,14 +91,36 @@ def get(option: str):
 
     :param option: One of CONFIG_VALUES's setting names.
     :returns: The persisted value if the config file has one for `option`, otherwise the default.
-        Values are returned as stored -- e.g. datetime_format's "auto" is returned literally,
-        not resolved to a concrete clock format (see cli.utils.resolve_datetime_format).
     """
     if option not in CONFIG_VALUES:
-        raise KeyError(f"Unknown config option: {option!r}")
+        raise KeyError(f"Unknown config option: {option!r}. Valid options: {sorted(CONFIG_VALUES)!r}")
 
+    setting = CONFIG_VALUES[option]
     settings = _read().get("settings", {})
-    return settings.get(option, CONFIG_VALUES[option].default)
+    return settings.get(option, setting.default)
+
+
+class RepairedSetting(NamedTuple):
+    key: str
+    def_val: str
+
+
+def repair_invalid_settings() -> list[RepairedSetting]:
+    """
+    Resets invalid settings keys to the default
+
+    :returns: A RepairedSetting(key, def_val) named tuple
+    """
+    settings = _read().setdefault("settings", {})
+    fixed = []
+    for key, setting in CONFIG_VALUES.items():
+        if key in settings and settings[key] not in setting.options:
+            repaired = RepairedSetting(key, setting.default)
+            settings[key] = repaired.def_val
+            fixed.append(repaired)
+    if fixed:
+        write()
+    return fixed
 
 
 def set(option: str, value) -> None:
