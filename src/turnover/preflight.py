@@ -1,3 +1,5 @@
+"""Runs before all commands to fetch/repair resources: db migrations, config fetch and validation, etc"""
+
 import concurrent.futures
 
 from . import config, db, pbap

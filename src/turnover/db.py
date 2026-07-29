@@ -1,3 +1,5 @@
+"""Database operations for messages and contacts"""
+
 import difflib
 import os
 import sqlite3

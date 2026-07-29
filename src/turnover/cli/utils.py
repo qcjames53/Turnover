@@ -1,3 +1,5 @@
+"""Helpful utilities for CLI operations"""
+
 import itertools
 import shutil
 import sys

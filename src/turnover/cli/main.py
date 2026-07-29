@@ -1,3 +1,5 @@
+"""Main entry point for cli application"""
+
 import argparse
 import sys
 import uuid
@@ -5,7 +7,7 @@ from datetime import datetime
 
 import shtab
 
-from .. import __version__, config, db, pbap, preflight, sdp
+from .. import __version__, bt, config, db, pbap, preflight, sdp
 from .. import map as map_
 from .._vendor.nobex.common import OBEXError
 from . import onboarding, render_messages, utils
@@ -14,6 +16,10 @@ _SUBCOMMANDS = ("contacts", "messages", "reset", "setup", "status", "sync")
 
 # Transient Bluetooth link trouble while sending shouldn't look like a crash.
 _LINK_ERRORS = (OSError, OBEXError)
+
+# setup's --<flag> options that map directly onto a config.CONFIG_VALUES key (--format is the odd
+# one out, see build_parser -- it's kept user-facing as "format" while the config key stays "layout").
+_SETUP_SETTING_FLAGS = ("layout", "datetime_format", "messages_displayed", "auto_sync")
 
 
 def _normalize_argv(argv: list[str]) -> list[str]:
@@ -49,7 +55,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("reset", help="Unlink you phone and wipe all data")
-    subparsers.add_parser("setup", help="Run the setup wizard to link a phone")
+
+    setup_parser = subparsers.add_parser("setup", help="Run the setup wizard to link a phone")
+    setup_parser.add_argument(
+        "--address", metavar="ADDR", help="Bluetooth address of a paired phone to link, skipping the wizard"
+    )
+    setup_parser.add_argument(
+        "--format", dest="layout", choices=config.CONFIG_VALUES["layout"].options, help="Message layout"
+    )
+    setup_parser.add_argument(
+        "--datetime-format", choices=config.CONFIG_VALUES["datetime_format"].options, help="Timestamp display format"
+    )
+    setup_parser.add_argument(
+        "--messages-displayed",
+        choices=config.CONFIG_VALUES["messages_displayed"].options,
+        help="Number of messages shown per conversation",
+    )
+    setup_parser.add_argument(
+        "--auto-sync", choices=config.CONFIG_VALUES["auto_sync"].options, help="What to automatically sync"
+    )
+
     subparsers.add_parser("status", help="Show which conversations have unread messages")
     subparsers.add_parser("sync", help="Run a full sync of messages and contacts")
 
@@ -195,6 +220,47 @@ def _run_reset() -> None:
     print("Reset complete")
 
 
+def _link_device(address: str) -> bool:
+    """
+    Confirms `address` is a paired device that can be probed for both MAP and PBAP, then persists
+    it (and its discovered RFCOMM channels) as the linked device.
+
+    :param address: Bluetooth address of the phone to link.
+    :returns: Whether linking succeeded.
+    """
+    if address not in {d.address for d in bt.paired_devices()}:
+        print(f"turnover: {address!r} is not a paired device -- pair it in your OS's Bluetooth settings first", file=sys.stderr)
+        return False
+
+    try:
+        mas_channel = sdp.find_rfcomm_channel(address, sdp.MESSAGE_ACCESS_SERVICE_CLASS)
+        pbap_channel = sdp.find_rfcomm_channel(address, sdp.PHONEBOOK_ACCESS_SERVICE_CLASS)
+        map_.probe(address, mas_channel)
+        pbap.probe(address, pbap_channel)
+    except (sdp.SdpError, *_LINK_ERRORS) as e:
+        print(f"turnover: couldn't link {address!r} ({e}) -- check the phone is nearby and reachable", file=sys.stderr)
+        return False
+
+    config.set_linked_device(address, mas_channel, pbap_channel)
+    return True
+
+
+def _run_setup(args: argparse.Namespace) -> None:
+    settings = {key: getattr(args, key) for key in _SETUP_SETTING_FLAGS if getattr(args, key) is not None}
+
+    if args.address is None and not settings:
+        onboarding.run_onboarding_wizard()
+        return
+
+    if args.address is not None and not _link_device(args.address):
+        return
+
+    for key, value in settings.items():
+        config.set(key, value)
+    config.write()
+    print("Setup saved")
+
+
 def _run_sync() -> None:
     device = config.get_linked_device()
     if device is None:
@@ -231,7 +297,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "messages":
         _run_messages(args.contacts, args.message)
     elif args.command == "setup":
-        onboarding.run_onboarding_wizard()
+        _run_setup(args)
     elif args.command == "status":
         _run_status()
     elif args.command == "sync":

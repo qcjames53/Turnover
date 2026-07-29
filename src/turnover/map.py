@@ -1,4 +1,4 @@
-# Message access protocol
+"""Invokes message access protocol operations on linked device"""
 # https://www.bluetooth.com/specifications/specs/html/?src=MAP_v1.4.3/out/en/index-en.html
 
 import re

@@ -1,3 +1,5 @@
+"""Data for demo conversations"""
+
 from datetime import datetime, timedelta
 
 from ..db import Conversation, Message

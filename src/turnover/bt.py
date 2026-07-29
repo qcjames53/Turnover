@@ -1,5 +1,4 @@
-# BlueZ D-Bus is used only for pairing management, not the data path.
-# We need our own SDP client due to Apple schenanigans (sdp.py).
+"""Bluetooth device management using BlueZ D-Bus (sans custom SDP client in sdp.py)"""
 
 from dataclasses import dataclass
 

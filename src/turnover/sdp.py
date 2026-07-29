@@ -1,4 +1,4 @@
-# Service discovery protocol
+"""Requests service discovery protocol operations on linked device"""
 # https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core_v6.3/out/en/host/service-discovery-protocol--sdp--specification.html
 #
 # We have to create our own SDP client since BlueZ's D-Bus OBEX API auto-selects OBEX-over-L2CAP, and iOS drops after

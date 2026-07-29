@@ -1,6 +1,5 @@
-# In-process stand-in for a paired phone, so the app runs without real Bluetooth
-# hardware or a BlueZ/PyGObject install (e.g. developing on macOS).
-#
+"""In-process stand-in for a paired phone, for developing without real Bluetooth hardware"""
+
 # Enabled by setting TURNOVER_FAKE_DEVICE=1 in the environment. Deliberately not a
 # CLI flag -- it shouldn't show up in --help or be something a regular user stumbles
 # into, just something a developer opts into explicitly.

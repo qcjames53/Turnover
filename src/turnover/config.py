@@ -1,3 +1,5 @@
+"""Manages config options for user preferences and device connection + channel details"""
+
 import json
 import os
 from dataclasses import dataclass

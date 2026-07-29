@@ -1,5 +1,4 @@
-"""Generic curses drawing helpers -- reusable by any curses screen this CLI adds, not tied to any
-particular one (today that's just onboarding's setup wizard)."""
+"""Generic curses drawing helpers"""
 
 import curses
 import re

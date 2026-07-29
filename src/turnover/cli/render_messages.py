@@ -1,3 +1,5 @@
+"""Renderers for message history as strings"""
+
 from datetime import datetime
 import re
 import textwrap

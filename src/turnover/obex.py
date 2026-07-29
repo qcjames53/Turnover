@@ -1,3 +1,5 @@
+"""Thin OBEX session helper (connect/retry/setpath) shared by map.py and pbap.py"""
+
 import time
 from typing import Any
 
@@ -23,10 +25,6 @@ def connect(address: str, channel: int, target_uuid: bytes, path_segments: tuple
             client.setpath(segment)
         return client
 
-    # Imported here, not at module level, so this module doesn't require BlueZ/Linux
-    # socket support to import (e.g. running with TURNOVER_FAKE_DEVICE=1 on macOS) --
-    # nOBEX's bluez_helper touches socket.BDADDR_ANY at import time, which only exists
-    # on Linux.
     from ._vendor.nobex.client import Client
 
     client = Client(address, channel)

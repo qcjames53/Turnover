@@ -1,13 +1,16 @@
+"""Wizard for running application onboarding and setup"""
+
 import curses
 import curses.ascii
 import locale
+import sys
 from dataclasses import dataclass
 from typing import Protocol
 
 from wcwidth import wcswidth
 
 from .. import bt, config, sdp
-from . import curses_ui, demo_conversation, render_messages
+from . import curses_ui, demo_conversation, render_messages, render_logo
 
 # (config key, display label) pairs, in the order they appear in the settings box.
 _SETTING_FIELDS: list[tuple[str, str]] = [
@@ -28,6 +31,10 @@ _SAVE_BUTTON_LABEL = "[ Save and exit ]"
 _DEVICE_ROW_LABEL = "Linked phone"
 _NO_DEVICES_LABEL = "No paired devices"
 _DEVICE_BADGE_SUFFIX_WIDTH = 2  # " " + a single-letter badge
+
+# _text_wizard's stand-in for "leave the device link as-is", alongside real device names in its
+# _prompt_choice() options list.
+_KEEP_UNLINKED_OPTION = "(none)"
 
 
 class Row(Protocol):
@@ -184,7 +191,7 @@ def _draw_settings_box(stdscr, rows: list[Row], selected_row: int) -> None:
     curses_ui.addstr_clipped(stdscr, box_y + len(rows) + 1, button_x, _SAVE_BUTTON_LABEL, button_attr)
 
 
-def _wizard(stdscr) -> None:
+def _interactive_wizard(stdscr) -> None:
     curses.curs_set(0)
     curses.set_escdelay(25)
     curses_ui.init_colors(stdscr)
@@ -223,9 +230,57 @@ def _wizard(stdscr) -> None:
             break
 
 
+def _prompt_choice(label: str, options: list[str], current: str) -> str:
+    by_lower = {option.lower(): option for option in options}
+    print(f"\n{label}:")
+    while True:
+        raw = input(f"Select from [{', '.join(options)}] or press enter to keep '{current}': ").strip()
+        if not raw:
+            return current
+        if raw.lower() in by_lower:
+            return by_lower[raw.lower()]
+        print(f"Invalid selection: '{raw!r}'")
+
+
+def _text_wizard() -> None:
+    """
+    Backup for _interactive_wizard() on terminals that can't run curses: asks for each of the same
+    settings, one at a time, via plain input().
+    """
+    print(render_logo.get_logo_string())
+    input("Press enter to continue...")
+    devices = sorted(bt.paired_devices(), key=_device_sort_key)
+    if not devices:
+        print(f"\n{_DEVICE_ROW_LABEL}: no paired devices found -- pair a phone in your OS's Bluetooth settings first.")
+    else:
+        by_name = {device.name: device for device in devices}
+        linked = config.get_linked_device()
+        current = next(
+            (name for name, device in by_name.items() if linked and device.address == linked["address"]),
+            _KEEP_UNLINKED_OPTION,
+        )
+        chosen_name = _prompt_choice(_DEVICE_ROW_LABEL, [*by_name, _KEEP_UNLINKED_OPTION], current)
+        if chosen_name != _KEEP_UNLINKED_OPTION:
+            chosen = by_name[chosen_name]
+            mas_channel = sdp.find_rfcomm_channel(chosen.address, sdp.MESSAGE_ACCESS_SERVICE_CLASS)
+            pbap_channel = sdp.find_rfcomm_channel(chosen.address, sdp.PHONEBOOK_ACCESS_SERVICE_CLASS)
+            config.set_linked_device(chosen.address, mas_channel, pbap_channel)
+
+    for key, label in _SETTING_FIELDS:
+        options = config.CONFIG_VALUES[key].options
+        config.set(key, _prompt_choice(label, options, config.get(key)))
+
+    config.write()
+    print("Sucessfully saved config")
+
+
 def run_onboarding_wizard() -> None:
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        _text_wizard()
+        return
+
     locale.setlocale(locale.LC_ALL, "")
     try:
-        curses.wrapper(_wizard)
+        curses.wrapper(_interactive_wizard)
     except KeyboardInterrupt:
         pass

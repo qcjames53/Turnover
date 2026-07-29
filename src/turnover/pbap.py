@@ -1,4 +1,4 @@
-# Phone book access protocol
+"""Invokes phone book access protocol operations on linked device"""
 # https://www.bluetooth.com/specifications/specs/html/?src=pbap-v1-2-3_1756156381/PBAP_v1.2.3/out/en/index-en.html
 
 from collections.abc import Callable
