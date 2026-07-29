@@ -1,17 +1,27 @@
 """Helpful utilities for CLI operations"""
 
 import itertools
+import re
 import shutil
 import sys
 import threading
 import locale
 import functools
 
+from wcwidth import wcswidth
+
 from .. import _fake_device, config
 
-ANSI_GREY = "\033[90m"
+ANSI_RED = "\033[91m"
+ANSI_GREEN = "\033[92m"
+ANSI_YELLOW = "\033[93m"
+ANSI_BLUE = "\033[94m"
 ANSI_CYAN = "\033[96m"
+ANSI_MAGENTA = "\033[95m"
+ANSI_GREY = "\033[90m"
 ANSI_RESET = "\033[0m"
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 _SPINNER_FRAMES = "|/-\\"
 _SPINNER_DELAY = 0.0667  # in seconds
@@ -65,6 +75,13 @@ def resolve_datetime_format() -> str:
 
 def colorize(text: str, code: str) -> str:
     return f"{code}{text}{ANSI_RESET}" if sys.stdout.isatty() else text
+
+
+def visible_width(text: str) -> int:
+    """Display width of `text` (via wcwidth), ignoring any ANSI SGR color escapes it contains --
+    len() and plain wcswidth() both count those escapes as characters, which throws off any
+    padding/wrapping math done against a colorize()'d string."""
+    return wcswidth(_ANSI_RE.sub("", text))
 
 
 def terminal_width() -> int:

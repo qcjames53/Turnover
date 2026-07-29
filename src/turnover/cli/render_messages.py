@@ -1,9 +1,7 @@
 """Renderers for message history as strings"""
 
 from datetime import datetime
-import re
 import textwrap
-from wcwidth import wcswidth
 
 from .. import config, pbap
 from . import utils
@@ -15,7 +13,6 @@ _MIN_DATETIME_TERMINAL_WIDTH = 50
 _IRC_TIME_COL_WIDTH_12H = 8
 _IRC_TIME_COL_WIDTH_24H = 6
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _REDUCED_DATETIME_MESSAGE_TIMING_THRESHOLD = 1201  # in seconds
 _COSY_MESSAGE_NEWLINE_TIMING_THRESHOLD = 1201  # in seconds
 _CONTACT_MONOGRAM = "[{name}]"
@@ -23,10 +20,6 @@ _USER_MONOGRAM = utils.colorize("[YOU]", utils.ANSI_CYAN)
 _BLOCK_INDICATOR_TOP = utils.colorize("╭ ", utils.ANSI_GREY)
 _BLOCK_INDICATOR_MID = utils.colorize("│ ", utils.ANSI_GREY)
 _BLOCK_INDICATOR_BTM = utils.colorize("╰ ", utils.ANSI_GREY)
-
-
-def _actual_width(text: str) -> int:
-    return wcswidth(_ANSI_RE.sub("", text))
 
 
 def _conversation_header(number: str, name: str | None = None):
@@ -122,9 +115,9 @@ def _wrap_message(m, monogram: str, monogram_width: int, left_padding: int, rema
     if len(lines) == 1:
         lines[0] = monogram + " " * (left_padding - monogram_width) + lines[0]
     else:
-        lines[0] = monogram + " " * (left_padding - monogram_width - _actual_width(_BLOCK_INDICATOR_TOP)) + _BLOCK_INDICATOR_TOP + lines[0]
-        lines[1:-1] = [" " * (left_padding - _actual_width(_BLOCK_INDICATOR_MID)) + _BLOCK_INDICATOR_MID + line for line in lines[1:-1]]
-        lines[-1] = " " * (left_padding - _actual_width(_BLOCK_INDICATOR_BTM)) + _BLOCK_INDICATOR_BTM + lines[-1]
+        lines[0] = monogram + " " * (left_padding - monogram_width - utils.visible_width(_BLOCK_INDICATOR_TOP)) + _BLOCK_INDICATOR_TOP + lines[0]
+        lines[1:-1] = [" " * (left_padding - utils.visible_width(_BLOCK_INDICATOR_MID)) + _BLOCK_INDICATOR_MID + line for line in lines[1:-1]]
+        lines[-1] = " " * (left_padding - utils.visible_width(_BLOCK_INDICATOR_BTM)) + _BLOCK_INDICATOR_BTM + lines[-1]
 
     return lines
 
@@ -152,12 +145,12 @@ def _render_dt_right(conversations, *, blank_line_around_header: bool, gap_thres
         for m in c.messages:
             is_outgoing = m.folder == "sent"
             monogram = _USER_MONOGRAM if is_outgoing else contact_monogram
-            monogram_width = _actual_width(monogram)
+            monogram_width = utils.visible_width(monogram)
 
             dt = datetime.strptime(m.datetime, "%Y%m%dT%H%M%S")
             dt_pair = _datetime(dt, prev_dt) if is_rendering_dt else None
             dt_string = "".join(dt_pair) if dt_pair else ""
-            dt_width = _actual_width(dt_string) if dt_string else 0
+            dt_width = utils.visible_width(dt_string) if dt_string else 0
 
             if gap_threshold and prev_dt and (dt - prev_dt).total_seconds() > gap_threshold:
                 output += "\n"
@@ -170,7 +163,7 @@ def _render_dt_right(conversations, *, blank_line_around_header: bool, gap_thres
             lines = _wrap_message(m, monogram, monogram_width, left_padding, remaining_space)
 
             if dt_string:
-                gap = max(terminal_width - _actual_width(lines[0]) - dt_width, 0)
+                gap = max(terminal_width - utils.visible_width(lines[0]) - dt_width, 0)
                 lines[0] += " " * gap + dt_string
 
             output += "\n".join(lines) + "\n"
@@ -213,7 +206,7 @@ def _render_irc(conversations) -> str:
         for m in c.messages:
             is_outgoing = m.folder == "sent"
             monogram = _USER_MONOGRAM if is_outgoing else contact_monogram
-            monogram_width = _actual_width(monogram)
+            monogram_width = utils.visible_width(monogram)
 
             left_padding = max(monogram_width + 2, _MIN_WIDTH_MONOGRAM_COL)
             remaining_space = terminal_width - left_padding - 1 - time_col_width
@@ -231,7 +224,7 @@ def _render_irc(conversations) -> str:
                 if d_string:
                     output += "\n" + d_string + "\n"
 
-                lines[0] = t_string + " " * (time_col_width - _actual_width(t_string)) + lines[0]
+                lines[0] = t_string + " " * (time_col_width - utils.visible_width(t_string)) + lines[0]
                 lines[1:] = [" " * time_col_width + line for line in lines[1:]]
 
             output += "\n".join(lines) + "\n"
