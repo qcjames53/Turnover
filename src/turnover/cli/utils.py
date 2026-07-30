@@ -84,6 +84,11 @@ def visible_width(text: str) -> int:
     return wcswidth(_ANSI_RE.sub("", text))
 
 
+def strip_ansi(text: str) -> str:
+    """Remove ANSI SGR color escapes from `text`, e.g. for output bound for a non-tty."""
+    return _ANSI_RE.sub("", text)
+
+
 def terminal_width() -> int:
     return shutil.get_terminal_size().columns if sys.stdout.isatty() else 80
 
